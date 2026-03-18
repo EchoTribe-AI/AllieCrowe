@@ -519,11 +519,11 @@ body { font-family: 'Nunito', sans-serif; background: var(--cream); color: var(-
       </div>
     </div>
     <div class="visitor-chips">
-      <div class="v-chip">🧸 Best toys right now?</div>
-      <div class="v-chip">🔥 What's hot this week?</div>
-      <div class="v-chip">💰 Best Walmart deals?</div>
-      <div class="v-chip">🎁 Gifts under $30?</div>
-      <div class="v-chip">👶 Baby must-haves?</div>
+      <div class="v-chip" onclick="sendChip(this)">🧸 Best toys right now?</div>
+      <div class="v-chip" onclick="sendChip(this)">🔥 What's hot this week?</div>
+      <div class="v-chip" onclick="sendChip(this)">💰 Best Walmart deals?</div>
+      <div class="v-chip" onclick="sendChip(this)">🎁 Gifts under $30?</div>
+      <div class="v-chip" onclick="sendChip(this)">👶 Baby must-haves?</div>
     </div>
     <div class="chat-section">
       <div class="chat-bubbles" id="chatBubbles">
@@ -1090,6 +1090,13 @@ function addToCollageFromSKU(idx) {
 }
 
 // ─── CHAT ───
+function sendChip(el) {
+  const text = el.textContent.trim();
+  const input = document.getElementById('chatInput');
+  input.value = text;
+  sendChat();
+}
+
 function sendChat() {
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
