@@ -6,16 +6,16 @@ app = Flask(__name__)
 
 # Product catalog matching the frontend
 PRODUCTS = [
-    {'id': 0, 'name': 'Barbie Dreamhouse Pool Party 75+ Pieces', 'price': '$179', 'was': '$210', 'retailer': 'Amazon', 'emoji': '🏠', 'link': 'https://amazon.com/dp/B0C...?tag=mommymedeals-20'},
-    {'id': 1, 'name': '2026 Glitter Dumpling Squishy Toy', 'price': '$13.49', 'was': '', 'retailer': 'Amazon', 'emoji': '✨', 'link': 'https://amazon.com/dp/B0D...?tag=mommymedeals-20'},
-    {'id': 2, 'name': 'Ms. Rachel Toddler Hoodie + Jogger Set', 'price': '$7.00', 'was': '$15.98', 'retailer': 'Walmart', 'emoji': '🧸', 'link': 'https://goto.walmart.com/ZVboz1'},
-    {'id': 3, 'name': 'Melissa & Doug Steering Wheel Dashboard', 'price': '$28', 'was': '', 'retailer': 'Amazon', 'emoji': '🚗', 'link': 'https://amazon.com/dp/B0A...?tag=mommymedeals-20'},
-    {'id': 4, 'name': 'Stanley Quencher 40oz Tumbler', 'price': '$35', 'was': '$45', 'retailer': 'Amazon', 'emoji': '🥤', 'link': 'https://amazon.com/dp/B09...?tag=mommymedeals-20'},
-    {'id': 5, 'name': 'Moana 2 Kids Underwear 7-Pack', 'price': '$10', 'was': '', 'retailer': 'Amazon', 'emoji': '🌊', 'link': 'https://amazon.com/dp/B0E...?tag=mommymedeals-20'},
-    {'id': 6, 'name': 'Imaginext Jurassic World Dinosaur Set', 'price': '$35', 'was': '$49', 'retailer': 'Walmart', 'emoji': '🦕', 'link': 'https://goto.walmart.com/'},
-    {'id': 7, 'name': 'Sol de Janeiro Travel Fragrance Set', 'price': '$32', 'was': '', 'retailer': 'Ulta', 'emoji': '🌸', 'link': 'https://www.ulta.com/...?PID=1390'},
-    {'id': 8, 'name': 'Kinetic Sand Deluxe Gift Bag', 'price': '$14', 'was': '', 'retailer': 'Target', 'emoji': '⏳', 'link': 'https://target.com/'},
-    {'id': 9, 'name': 'Keter Plastic Storage Box 55-Gallon', 'price': '$39', 'was': '$55', 'retailer': 'Wayfair', 'emoji': '📦', 'link': 'https://wayfair.com/'},
+    {'id': 0, 'name': 'Barbie Dreamhouse Pool Party', 'price': '$179', 'was': '$210', 'retailer': 'Amazon', 'emoji': '🏠', 'link': 'https://amazon.com/dp/B0C...?tag=mommymedeals-20'},
+    {'id': 1, 'name': 'Glitter Dumpling Squishy 2026', 'price': '$13.49', 'was': '', 'retailer': 'Amazon', 'emoji': '✨', 'link': 'https://amazon.com/dp/B0D...?tag=mommymedeals-20'},
+    {'id': 2, 'name': 'Ms. Rachel Toddler Set', 'price': '$7.00', 'was': '$15.98', 'retailer': 'Walmart', 'emoji': '🧸', 'link': 'https://goto.walmart.com/ZVboz1'},
+    {'id': 3, 'name': 'Melissa & Doug Dashboard', 'price': '$28', 'was': '', 'retailer': 'Amazon', 'emoji': '🚗', 'link': 'https://amazon.com/dp/B0A...?tag=mommymedeals-20'},
+    {'id': 4, 'name': 'Stanley Quencher 40oz', 'price': '$35', 'was': '$45', 'retailer': 'Amazon', 'emoji': '🥤', 'link': 'https://amazon.com/dp/B09...?tag=mommymedeals-20'},
+    {'id': 5, 'name': 'Moana 2 Underwear 7-Pack', 'price': '$10', 'was': '', 'retailer': 'Amazon', 'emoji': '🌊', 'link': 'https://amazon.com/dp/B0E...?tag=mommymedeals-20'},
+    {'id': 6, 'name': 'Imaginext Jurassic Dino Set', 'price': '$35', 'was': '$49', 'retailer': 'Walmart', 'emoji': '🦕', 'link': 'https://goto.walmart.com/...'},
+    {'id': 7, 'name': 'Sol de Janeiro Travel Set', 'price': '$32', 'was': '', 'retailer': 'Ulta', 'emoji': '🌸', 'link': 'https://www.ulta.com/...?PID=1390'},
+    {'id': 8, 'name': 'Kinetic Sand Gift Bag', 'price': '$14', 'was': '', 'retailer': 'Target', 'emoji': '⏳', 'link': 'https://target.com/...'},
+    {'id': 9, 'name': 'Keter Storage Box', 'price': '$39', 'was': '$55', 'retailer': 'Wayfair', 'emoji': '📦', 'link': 'https://wayfair.com/...'},
 ]
 
 SYSTEM_PROMPT = """You are Steph, the creator behind @EverydaywithSteph and the Mommy & Me Collective. You talk mom-to-mom: warm, enthusiastic, concise, and occasionally use light emojis (but not excessively). You share deals and product recommendations like a trusted friend who happens to know every sale happening right now.
@@ -69,38 +69,35 @@ def chat():
     if not user_message:
         return jsonify({'error': 'message is required'}), 400
 
-    try:
-        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
-        message = client.messages.create(
-            model='claude-3-5-sonnet-20241022',
-            max_tokens=256,
-            system=SYSTEM_PROMPT,
-            messages=[{'role': 'user', 'content': user_message}],
-        )
-        reply = message.content[0].text
+    client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+    message = client.messages.create(
+        model='claude-sonnet-4-6',
+        max_tokens=256,
+        system=SYSTEM_PROMPT,
+        messages=[{'role': 'user', 'content': user_message}],
+    )
+    reply = message.content[0].text
+    
+    # Parse product recommendations from response
+    products = []
+    text_reply = reply
+    
+    if 'PRODUCTS:' in reply:
+        parts = reply.split('PRODUCTS:')
+        text_reply = parts[0].strip()
+        product_ids_str = parts[1].strip()
         
-        # Parse product recommendations from response
-        products = []
-        text_reply = reply
-        
-        if 'PRODUCTS:' in reply:
-            parts = reply.split('PRODUCTS:')
-            text_reply = parts[0].strip()
-            product_ids_str = parts[1].strip()
-            
-            # Extract product IDs (comma-separated integers)
-            try:
-                product_ids = [int(pid.strip()) for pid in product_ids_str.split(',')]
-                products = [PRODUCTS[pid] for pid in product_ids if 0 <= pid < len(PRODUCTS)]
-            except (ValueError, IndexError):
-                pass  # If parsing fails, just return text without products
-        
-        return jsonify({
-            'reply': text_reply,
-            'products': products
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Extract product IDs (comma-separated integers)
+        try:
+            product_ids = [int(pid.strip()) for pid in product_ids_str.split(',')]
+            products = [PRODUCTS[pid] for pid in product_ids if 0 <= pid < len(PRODUCTS)]
+        except (ValueError, IndexError):
+            pass  # If parsing fails, just return text without products
+    
+    return jsonify({
+        'reply': text_reply,
+        'products': products
+    })
 
 @app.route('/')
 def index():

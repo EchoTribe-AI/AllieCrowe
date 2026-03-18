@@ -132,6 +132,7 @@ body { font-family: 'Nunito', sans-serif; background: var(--cream); color: var(-
 .chat-product-btn { width: 100%; background: linear-gradient(135deg, var(--coral), #FF8E53); color: white; border: none; border-radius: 10px; padding: 10px; font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 800; cursor: pointer; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s; }
 .chat-product-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255,107,107,0.3); opacity: 0.95; }
 
+/* Mobile responsiveness for product cards */
 @media (max-width: 640px) {
   .product-cards-wrap { max-width: 85%; margin-left: 38px; }
   .chat-product-body { padding: 10px; gap: 10px; }
@@ -545,11 +546,11 @@ body { font-family: 'Nunito', sans-serif; background: var(--cream); color: var(-
       </div>
     </div>
     <div class="visitor-chips">
-      <div class="v-chip" onclick="sendChip(this)">🧸 Best toys right now?</div>
-      <div class="v-chip" onclick="sendChip(this)">🔥 What's hot this week?</div>
-      <div class="v-chip" onclick="sendChip(this)">💰 Best Walmart deals?</div>
-      <div class="v-chip" onclick="sendChip(this)">🎁 Gifts under $30?</div>
-      <div class="v-chip" onclick="sendChip(this)">👶 Baby must-haves?</div>
+      <div class="v-chip">🧸 Best toys right now?</div>
+      <div class="v-chip">🔥 What's hot this week?</div>
+      <div class="v-chip">💰 Best Walmart deals?</div>
+      <div class="v-chip">🎁 Gifts under $30?</div>
+      <div class="v-chip">👶 Baby must-haves?</div>
     </div>
     <div class="chat-section">
       <div class="chat-bubbles" id="chatBubbles">
@@ -1116,25 +1117,77 @@ function addToCollageFromSKU(idx) {
 }
 
 // ─── CHAT ───
-function sendChip(el) {
-  const text = el.textContent.trim();
+function sendChat() {
   const input = document.getElementById('chatInput');
-  input.value = text;
-  sendChat();
-}
+  const text = input.value.trim();
+  if (!text) return;
+  const bubbles = document.getElementById('chatBubbles');
 
-function calculateSavings(price, was) {
-  if (!was || was === '') return null;
-  const current = parseFloat(price.replace('$', ''));
-  const original = parseFloat(was.replace('$', ''));
-  const savings = Math.round(((original - current) / original) * 100);
-  return savings > 0 ? savings : null;
+  // Render user bubble
+  const userRow = document.createElement('div');
+  userRow.className = 'chat-row user';
+  userRow.innerHTML = `<div class="chat-av user-av">🙋‍♀️</div><div class="chat-bubble user-b">${text}</div>`;
+  bubbles.appendChild(userRow);
+  input.value = '';
+  input.disabled = true;
+
+  // Typing indicator
+  const typingRow = document.createElement('div');
+  typingRow.className = 'chat-row';
+  typingRow.id = 'typingIndicator';
+  typingRow.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b" style="opacity:0.6;font-style:italic">Steph is typing…</div>`;
+  bubbles.appendChild(typingRow);
+  bubbles.scrollTop = bubbles.scrollHeight;
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text }),
+  })
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('typingIndicator').remove();
+      
+      // Add text response
+      const steph = document.createElement('div');
+      steph.className = 'chat-row';
+      steph.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b">${data.reply}</div>`;
+      bubbles.appendChild(steph);
+      
+      // Add product cards if any
+      if (data.products && data.products.length > 0) {
+        const productsWrap = document.createElement('div');
+        productsWrap.className = 'product-cards-wrap';
+        
+        data.products.forEach(product => {
+          const card = createProductCard(product);
+          productsWrap.appendChild(card);
+        });
+        
+        bubbles.appendChild(productsWrap);
+      }
+      
+      bubbles.scrollTop = bubbles.scrollHeight;
+    })
+    .catch(() => {
+      document.getElementById('typingIndicator').remove();
+      const errRow = document.createElement('div');
+      errRow.className = 'chat-row';
+      errRow.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b" style="color:#c00">Sorry, something went wrong. Try again! 🙏</div>`;
+      bubbles.appendChild(errRow);
+      bubbles.scrollTop = bubbles.scrollHeight;
+    })
+    .finally(() => { input.disabled = false; input.focus(); });
 }
 
 function createProductCard(product) {
-  const savings = calculateSavings(product.price, product.was);
   const card = document.createElement('div');
   card.className = 'chat-product-card';
+  
+  const wasPrice = product.was ? `<span class="chat-product-was">${product.was}</span>` : '';
+  const savings = product.was ? calculateSavings(product.price, product.was) : '';
+  const savingsBadge = savings ? `<span class="chat-product-save">Save ${savings}</span>` : '';
+  
   card.innerHTML = `
     <div class="chat-product-body">
       <div class="chat-product-img">${product.emoji}</div>
@@ -1142,69 +1195,37 @@ function createProductCard(product) {
         <div class="chat-product-name">${product.name}</div>
         <div class="chat-product-price-row">
           <span class="chat-product-price">${product.price}</span>
-          ${product.was ? `<span class="chat-product-was">${product.was}</span>` : ''}
-          ${savings ? `<span class="chat-product-save">Save ${savings}%</span>` : ''}
+          ${wasPrice}
+          ${savingsBadge}
         </div>
         <div class="chat-product-retailer">${product.retailer}</div>
       </div>
     </div>
     <div class="chat-product-footer">
-      <a href="${product.link}" class="chat-product-btn" target="_blank" rel="noopener noreferrer">Shop Now →</a>
+      <a href="${product.link}" target="_blank" class="chat-product-btn" onclick="trackClick('${product.name}', '${product.retailer}')">
+        Shop Now →
+      </a>
     </div>
   `;
+  
   return card;
 }
 
-function sendChat() {
-  const input = document.getElementById('chatInput');
-  const text = input.value.trim();
-  if (!text) return;
-  const bubbles = document.getElementById('chatBubbles');
-  const userRow = document.createElement('div');
-  userRow.className = 'chat-row user';
-  userRow.innerHTML = `<div class="chat-av user-av">🙋‍♀️</div><div class="chat-bubble user-b">${text}</div>`;
-  bubbles.appendChild(userRow);
-  input.value = '';
-  
-  // Call the API
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text })
-  })
-  .then(res => res.json())
-  .then(data => {
-    if (data.error) {
-      const errorRow = document.createElement('div');
-      errorRow.className = 'chat-row';
-      errorRow.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b">Oops! Let me get back to you on that 💕</div>`;
-      bubbles.appendChild(errorRow);
-    } else {
-      const steph = document.createElement('div');
-      steph.className = 'chat-row';
-      steph.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b">${data.reply}</div>`;
-      bubbles.appendChild(steph);
-      
-      // Add product cards if present
-      if (data.products && data.products.length > 0) {
-        const wrap = document.createElement('div');
-        wrap.className = 'product-cards-wrap';
-        data.products.forEach(product => {
-          wrap.appendChild(createProductCard(product));
-        });
-        bubbles.appendChild(wrap);
-      }
-    }
-    bubbles.scrollTop = bubbles.scrollHeight;
-  })
-  .catch(err => {
-    console.error('Chat error:', err);
-    const errorRow = document.createElement('div');
-    errorRow.className = 'chat-row';
-    errorRow.innerHTML = `<div class="chat-av steph">👩‍👧</div><div class="chat-bubble steph-b">Oops! Let me get back to you on that 💕</div>`;
-    bubbles.appendChild(errorRow);
-    bubbles.scrollTop = bubbles.scrollHeight;
-  });
+function calculateSavings(current, was) {
+  const currentNum = parseFloat(current.replace('$', ''));
+  const wasNum = parseFloat(was.replace('$', ''));
+  if (wasNum > currentNum) {
+    const savings = wasNum - currentNum;
+    return '$' + savings.toFixed(2);
+  }
+  return '';
+}
+
+function trackClick(productName, retailer) {
+  // Analytics tracking for affiliate link clicks
+  console.log('Product click:', productName, retailer);
+  // TODO: Send to analytics endpoint
+}
 }
 
 // ─── TOAST ───
