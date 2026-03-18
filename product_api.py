@@ -9,6 +9,7 @@ import json
 import hmac
 import hashlib
 import time
+import base64
 from typing import List, Dict, Optional
 from urllib.parse import urlencode, quote
 
@@ -20,12 +21,14 @@ class WalmartAPI:
     
     def __init__(self):
         self.public_key = os.environ.get('WALMART_API_PUBLIC_KEY')
-        self.private_key = os.environ.get('WALMART_API_PRIVATE_KEY')
+        raw_key = os.environ.get('WALMART_API_PRIVATE_KEY') or ""
+        # Fix: Replace escaped newlines (\n as two chars) with actual newlines
+        self.private_key_pem = raw_key.replace("\\n", "\n")
     
     def search(self, query: str, max_results: int = 3) -> List[Dict]:
         """Search Walmart products"""
         print(f"[WALMART] Searching for: {query}")
-        print(f"[WALMART] Public key set: {bool(self.public_key)} | Private key set: {bool(self.private_key)}")
+        print(f"[WALMART] Public key set: {bool(self.public_key)} | Private key PEM set: {bool(self.private_key_pem)}")
         
         endpoint = f"{self.BASE_URL}/search"
         
@@ -74,18 +77,37 @@ class WalmartAPI:
             return []
     
     def _generate_signature(self, url: str, params: Dict) -> str:
-        """Generate HMAC signature for Walmart API authentication"""
+        """Generate RSA-SHA256 signature for Walmart API authentication"""
         timestamp = str(int(time.time() * 1000))
-        params_str = urlencode(sorted(params.items()))
-        string_to_sign = f"{self.public_key}\n{url}\n{params_str}\n{timestamp}\n"
         
-        signature = hmac.new(
-            self.private_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
+        # Build the string to sign: consumerId\ntimestamp\nkeyVersion\n
+        string_to_sign = f"{self.public_key}\n{timestamp}\n1\n"
         
-        return signature
+        try:
+            from cryptography.hazmat.primitives import serialization, hashes
+            from cryptography.hazmat.primitives.asymmetric import padding
+            import base64
+            
+            print(f"[WALMART] Loading PEM key...")
+            private_key = serialization.load_pem_private_key(
+                self.private_key_pem.encode('utf-8'),
+                password=None
+            )
+            
+            sig_bytes = private_key.sign(
+                string_to_sign.encode('utf-8'),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+            
+            signature = base64.b64encode(sig_bytes).decode('utf-8')
+            print(f"[WALMART] RSA signature generated successfully")
+            return signature
+        except Exception as e:
+            print(f"[WALMART] Signature generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
     
     def _category_to_emoji(self, category_path: str) -> str:
         """Map Walmart category to emoji"""
