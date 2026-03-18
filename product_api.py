@@ -24,6 +24,9 @@ class WalmartAPI:
     
     def search(self, query: str, max_results: int = 3) -> List[Dict]:
         """Search Walmart products"""
+        print(f"[WALMART] Searching for: {query}")
+        print(f"[WALMART] Public key set: {bool(self.public_key)} | Private key set: {bool(self.private_key)}")
+        
         endpoint = f"{self.BASE_URL}/search"
         
         params = {
@@ -37,9 +40,11 @@ class WalmartAPI:
             'WM_CONSUMER.ID': self.public_key,
             'WM_SEC.AUTH_SIGNATURE': self._generate_signature(endpoint, params)
         }
+        print(f"[WALMART] Calling endpoint: {endpoint}")
         
         try:
             response = requests.get(endpoint, params=params, headers=headers, timeout=10)
+            print(f"[WALMART] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
             
@@ -60,7 +65,12 @@ class WalmartAPI:
             return products
             
         except requests.exceptions.RequestException as e:
-            print(f"Walmart API error: {e}")
+            print(f"[WALMART] API error: {e}")
+            return []
+        except Exception as e:
+            print(f"[WALMART] Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _generate_signature(self, url: str, params: Dict) -> str:
@@ -273,15 +283,20 @@ class ProductResolver:
         3. Generate affiliate links
         """
         results = []
+        print(f"[RESOLVER] Starting resolve for query: '{query}' | category: {category}")
         
         hot_matches = self._search_hot_catalog(query, category)
+        print(f"[RESOLVER] Hot catalog found {len(hot_matches)} matches")
         results.extend(hot_matches)
         
         if len(results) < max_results:
             preferred_retailer = self._get_preferred_retailer(category)
+            print(f"[RESOLVER] Need more results ({len(results)}/{max_results}), trying {preferred_retailer}")
             
             if preferred_retailer == 'walmart':
+                print(f"[RESOLVER] Calling Walmart API for: '{query}'")
                 walmart_products = self.walmart_api.search(query, max_results - len(results))
+                print(f"[RESOLVER] Walmart API returned {len(walmart_products)} products")
                 
                 for product in walmart_products:
                     if product.get('url'):
@@ -294,8 +309,22 @@ class ProductResolver:
                 
                 results.extend(walmart_products)
             
-            elif preferred_retailer == 'amazon':
-                pass
+            else:
+                # Fallback: For unimplemented retailers (wayfair, ulta, footlocker, etc), use Walmart
+                print(f"[RESOLVER] Retailer '{preferred_retailer}' not yet implemented, falling back to Walmart")
+                walmart_products = self.walmart_api.search(query, max_results - len(results))
+                print(f"[RESOLVER] Walmart fallback returned {len(walmart_products)} products")
+                
+                for product in walmart_products:
+                    if product.get('url'):
+                        product['link'] = self.impact_api.generate_walmart_link(
+                            product['url'], 
+                            product.get('sku'),
+                            sub_id1='chat-recommendation',
+                            sub_id2=product.get('sku')
+                        )
+                
+                results.extend(walmart_products)
         
         for product in results:
             if not product.get('link'):
@@ -304,6 +333,7 @@ class ProductResolver:
                 elif product['retailer'] == 'Walmart' and product.get('url'):
                     product['link'] = self.impact_api.generate_walmart_link(product['url'], product.get('sku'))
         
+        print(f"[RESOLVER] Returning {len(results[:max_results])} total products")
         return results[:max_results]
     
     def _search_hot_catalog(self, query: str, category: str = None) -> List[Dict]:

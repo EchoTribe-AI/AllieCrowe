@@ -84,6 +84,7 @@ RULES:
 def chat():
     data = request.get_json(silent=True) or {}
     user_message = (data.get('message') or '').strip()
+    print(f"[CHAT] Received message: {user_message[:50]}...")
     if not user_message:
         return jsonify({'error': 'message is required'}), 400
 
@@ -96,6 +97,7 @@ def chat():
             messages=[{'role': 'user', 'content': user_message}],
         )
         reply = message.content[0].text
+        print(f"[REPLY] Claude response length: {len(reply)} | Contains PRODUCTS: {'PRODUCTS:' in reply} | Contains SEARCH: {'SEARCH:' in reply}")
         
         # Parse product recommendations from response
         products = []
@@ -116,14 +118,21 @@ def chat():
             parts = reply.split('SEARCH:')
             text_reply = parts[0].strip()
             search_query = parts[1].strip()
+            print(f"[SEARCH] Query: '{search_query}'")
             
             category = detect_category(search_query)
+            print(f"[SEARCH] Category: {category}")
             
             try:
                 resolved_products = product_resolver.resolve(search_query, category, max_results=3)
                 products = resolved_products
+                print(f"[SEARCH] Resolved {len(products)} products")
+                for p in products:
+                    print(f"  - {p.get('name', 'N/A')}")
             except Exception as e:
-                print(f"Product resolution error: {e}")
+                print(f"[ERROR] Product resolution error: {e}")
+                import traceback
+                traceback.print_exc()
                 products = []
         
         else:
@@ -133,15 +142,21 @@ def chat():
             search_indicators = ['show me', 'find', 'search for', 'look for', 'what about', 'kitchen', 'gadget', 
                                'decor', 'furniture', 'cheap', 'budget', 'affordable', 'inexpensive', 'under $']
             
-            if any(indicator in user_message.lower() for indicator in search_indicators):
+            has_search_indicator = any(indicator in user_message.lower() for indicator in search_indicators)
+            print(f"[DEBUG] No PRODUCTS/SEARCH in reply. Has search indicator: {has_search_indicator}")
+            
+            if has_search_indicator:
                 # User is likely asking for something to search for
                 category = detect_category(user_message)
+                print(f"[DEBUG] Detected category: {category}")
                 try:
                     resolved_products = product_resolver.resolve(user_message, category, max_results=3)
                     products = resolved_products
-                    print(f"🔍 Auto-triggered search for: {user_message}")
+                    print(f"🔍 Auto-triggered search for: {user_message} | Found {len(products)} products")
                 except Exception as e:
-                    print(f"Product resolution error: {e}")
+                    print(f"[ERROR] Product resolution error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     products = []
         
         return jsonify({
