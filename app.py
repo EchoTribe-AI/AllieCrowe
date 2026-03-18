@@ -50,23 +50,35 @@ RESPONSE RULES:
 - End with a helpful nudge when natural
 - Never break character or mention Claude/AI
 
-PRODUCT RECOMMENDATION FORMAT:
-When recommending products, end your response with a line containing ONLY product IDs in this exact format:
-PRODUCTS: 0,1,2
+PRODUCT RECOMMENDATION FORMAT (CRITICAL - ALWAYS FOLLOW):
+You MUST end EVERY response with either PRODUCTS: or SEARCH: line. Never end without one.
 
-If you don't have exact matches in the catalog, end with:
-SEARCH: category_keyword
-
-Examples:
+**Option 1: PRODUCTS format** (when you have exact matches in the catalog above)
+End with: PRODUCTS: 0,1,2
+Example:
 User: "best toy under $30?"
 Response: "oooh I have the PERFECT picks for you! The Ms. Rachel set is only $7 at Walmart right now (56% off 😱), or the Glitter Dumpling Squishy for $13.49 — my kids are OBSESSED with it. Both are total winners!
 PRODUCTS: 2,1"
 
-User: "show me cheap home decor"
-Response: "Let me find you some amazing home finds at great prices!
-SEARCH: home decor budget"
+**Option 2: SEARCH format** (when user asks for something NOT in your catalog)
+End with: SEARCH: category searchterm
+Example:
+User: "show me cheap kitchen gadgets"
+Response: "Let me find you some amazing kitchen gadgets that won't break the bank!
+SEARCH: home kitchen gadgets cheap"
 
-Always include PRODUCTS: line if you mention specific items by name, or SEARCH: if you need to find products."""
+User: "what about bluetooth speakers?"
+Response: "Great question! Let me search for those!
+SEARCH: electronics bluetooth speakers"
+
+RULES:
+- If your 10 Hot Score products match the user's request → use PRODUCTS: format
+- If user asks for something OUTSIDE your catalog → ALWAYS use SEARCH: format
+- Kitchen gadgets → NOT in catalog → use SEARCH:
+- Bluetooth speakers → NOT in catalog → use SEARCH:
+- Toys under $30 → IN catalog → use PRODUCTS:
+- DO NOT respond without a final PRODUCTS: or SEARCH: line
+- SEARCH: queries should be concise (2-3 keywords max)"""
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -113,6 +125,24 @@ def chat():
             except Exception as e:
                 print(f"Product resolution error: {e}")
                 products = []
+        
+        else:
+            # Fallback: If Claude didn't include PRODUCTS: or SEARCH: but the query suggests searching,
+            # detect and trigger search automatically
+            # Common search indicators: "show me", "find", "cheap", "budget", "kitchen", "gadgets", "decor", etc.
+            search_indicators = ['show me', 'find', 'search for', 'look for', 'what about', 'kitchen', 'gadget', 
+                               'decor', 'furniture', 'cheap', 'budget', 'affordable', 'inexpensive', 'under $']
+            
+            if any(indicator in user_message.lower() for indicator in search_indicators):
+                # User is likely asking for something to search for
+                category = detect_category(user_message)
+                try:
+                    resolved_products = product_resolver.resolve(user_message, category, max_results=3)
+                    products = resolved_products
+                    print(f"🔍 Auto-triggered search for: {user_message}")
+                except Exception as e:
+                    print(f"Product resolution error: {e}")
+                    products = []
         
         return jsonify({
             'reply': text_reply,
