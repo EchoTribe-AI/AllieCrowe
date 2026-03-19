@@ -1,0 +1,77 @@
+Here's a complete reference you can share directly with the other agent:
+
+Walmart Affiliate API — Working Authentication Setup
+The 403 is almost always one of these 5 things:
+1. Private Key Newline Problem (Most Common)
+When stored in Replit Secrets, the PEM key becomes a flat string with literal \n characters instead of real newlines. You must convert them back before use:
+
+raw_key = os.environ.get("WALMART_API_PRIVATE_KEY", "")
+private_key_pem = raw_key.replace("\\n", "\n")  # critical step
+The secret should be stored as:
+
+-----BEGIN PRIVATE KEY-----\nxxxxx=\n-----END PRIVATE KEY-----\n
+And after .replace("\\n", "\n"), it becomes a proper multiline PEM block that cryptography can parse.
+
+2. Exact String to Sign
+The signature is built over exactly this format — every field on its own line, with a trailing newline at the end:
+
+ts = str(int(time.time() * 1000))  # milliseconds, not seconds
+string_to_sign = f"{consumer_id}\n{ts}\n{key_version}\n"
+Common mistakes:
+
+Using seconds instead of milliseconds for the timestamp
+Missing the trailing \n after key_version
+Wrong order of fields
+3. Signing Algorithm
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
+import base64
+private_key = serialization.load_pem_private_key(
+    private_key_pem.encode("utf-8"),
+    password=None,
+    backend=default_backend()
+)
+sig_bytes = private_key.sign(
+    string_to_sign.encode("utf-8"),
+    padding.PKCS1v15(),   # NOT PSS — must be PKCS1v15
+    hashes.SHA256()
+)
+signature = base64.b64encode(sig_bytes).decode("utf-8")
+4. Required Headers — All 6, Exact Names
+headers = {
+    "WM_CONSUMER.ID":           consumer_id,       # your UUID consumer ID
+    "WM_CONSUMER.INTIMESTAMP":  ts,                # same timestamp used in signing
+    "WM_SEC.KEY_VERSION":       "1",               # almost always "1"
+    "WM_SEC.AUTH_SIGNATURE":    signature,         # base64 RSA-SHA256 signature
+    "WM_CONSUMER.CHANNEL.TYPE": "AFFILIATE",       # must match your account type
+    "WM_QOS.CORRELATION_ID":    str(uuid.uuid4()), # unique per request, any UUID
+    "Accept":                   "application/json",
+}
+Missing any of these = 403. The header names are case-sensitive and use dots, not hyphens.
+
+5. Correct Base URL and Endpoint
+# Base URL
+WALMART_BASE = "https://developer.api.walmart.com"
+# Single item lookup
+path = f"/api-proxy/service/affil/product/v2/items/{item_id}"
+# Batch lookup (up to 20 items)
+path = "/api-proxy/service/affil/product/v2/items"
+params = {
+    "ids": "123456,789012",   # comma-separated
+    "publisherId": publisher_id
+}
+6. Environment Variables Needed
+Variable	What it is
+WALMART_API_PUBLIC_KEY	Your Consumer ID (UUID format)
+WALMART_API_PRIVATE_KEY	Full PEM private key with \n as escape sequences
+WALMART_PUBLISHER_ID	Publisher/affiliate ID
+Quick Sanity Check to Share
+Tell the other agent to add this debug snippet and look at the output:
+
+raw_key = os.environ.get("WALMART_API_PRIVATE_KEY", "")
+fixed_key = raw_key.replace("\\n", "\n")
+print("Has BEGIN header:", "BEGIN PRIVATE KEY" in fixed_key)
+print("Has real newlines:", "\n" in fixed_key)
+print("Consumer ID set:", bool(os.environ.get("WALMART_API_PUBLIC_KEY")))
+If Has real newlines is False, the newline fix isn't applied and every request will 403.

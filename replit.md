@@ -6,6 +6,7 @@ Flask web app for Steph's affiliate marketing business serving:
 - Three linked strategy/architecture documentation pages (Build Plan, Architecture, Connections)
 - Live Claude AI-powered chat with affiliate product recommendations
 - Mobile-responsive product cards with affiliate links
+- Real-time Walmart product search via Walmart Affiliate API v2
 
 ## Architecture
 
@@ -18,7 +19,7 @@ Flask web app for Steph's affiliate marketing business serving:
 
 ### Backend
 - `app.py` - Flask app with `/api/chat` endpoint for AI chat
-- `product_api.py` - Product resolution and affiliate link generation
+- `product_api.py` - Product resolution with Walmart API integration and affiliate link generation
 
 ### Product System
 **Hot Score Catalog** (13 pre-vetted products):
@@ -28,10 +29,11 @@ Flask web app for Steph's affiliate marketing business serving:
 **Resolution Logic**:
 1. Parse Claude response for `PRODUCTS:` (catalog IDs) or `SEARCH:` (API query)
 2. For PRODUCTS: Return catalog items directly
-3. For SEARCH: 
-   - Try Walmart Affiliate API first
-   - Fallback to hot catalog search if API fails
-   - Auto-detect category (toys/beauty/baby/home) for smarter matching
+3. For SEARCH:
+   - Search hot catalog first (fast, always available)
+   - If <3 matches, call Walmart Affiliate API with RSA-SHA256 authentication
+   - Combine real-time API results with catalog results
+   - Auto-detect category (toys/beauty/baby/home/electronics) for routing
 
 ### AI Chat
 - **Model**: Claude Opus 4.1 (claude-opus-4-1-20250805)
@@ -68,10 +70,16 @@ Response:
 
 ## Configuration
 
-### Environment Variables (Secrets)
+### Environment Variables (Replit Secrets)
+**Required for Claude AI**:
 - `ANTHROPIC_API_KEY` - Claude API key
-- `WALMART_API_PUBLIC_KEY` - Walmart Affiliate publisherId (UUID format)
-- `WALMART_API_PRIVATE_KEY` - Walmart API key (not used for Affiliate v2 API)
+
+**Required for Walmart Affiliate API v2**:
+- `WALMART_API_PUBLIC_KEY` - Walmart Consumer ID (UUID format)
+- `WALMART_API_PRIVATE_KEY` - Walmart Private Key (PEM format with `\n` escape sequences)
+- `WALMART_PUBLISHER_ID` - Your publisher/affiliate ID
+
+**Optional (for future integrations)**:
 - `IMPACT_ACCOUNT_SID` - Impact.com account ID for Walmart link tracking
 - `IMPACT_AUTH_TOKEN` - Impact.com auth token
 - `CRAWLBASE_JS_TOKEN` - Crawlbase token (Amazon scraping, currently unused)
@@ -79,61 +87,101 @@ Response:
 ### Deployment
 - Command: `python3 -m gunicorn --bind=0.0.0.0:5000 --reuse-port app:app`
 - Autoscale enabled
-- Gunicorn, requests, beautifulsoup4, lxml installed
+- Dependencies: gunicorn, requests, beautifulsoup4, lxml, cryptography
+
+## Walmart Affiliate API v2 Authentication
+
+### How It Works
+The Walmart API uses RSA-SHA256 authentication with 6 required headers:
+
+1. **Private Key Handling**
+   - Keys stored in Replit Secrets have `\n` as escape sequences (two characters)
+   - Code converts them to real newlines: `.replace("\\n", "\n")`
+   - PEM key must be loadable by cryptography library after conversion
+
+2. **Signature Generation**
+   - Timestamp in milliseconds (not seconds!)
+   - String to sign format: `{consumer_id}\n{timestamp}\n1\n`
+   - Sign with PKCS1v15 padding + SHA256
+   - Base64 encode the binary signature
+
+3. **Required Headers**
+   - `WM_CONSUMER.ID` - Your Consumer ID
+   - `WM_CONSUMER.INTIMESTAMP` - Timestamp used in signature
+   - `WM_SEC.KEY_VERSION` - Usually "1"
+   - `WM_SEC.AUTH_SIGNATURE` - Base64 RSA-SHA256 signature
+   - `WM_CONSUMER.CHANNEL.TYPE` - Must be "AFFILIATE"
+   - `WM_QOS.CORRELATION_ID` - Unique UUID per request
+
+4. **Request Format**
+   ```
+   GET /api-proxy/service/affil/product/v2/search?query=...&publisherId=...
+   Headers: [6 required headers above]
+   ```
 
 ## Recent Fixes (March 19, 2026)
 
-### Walmart API Authentication Fix
-**Issue**: 403 Forbidden errors despite valid credentials
-**Root Cause**: Using wrong authentication method (Marketplace Seller API headers instead of Affiliate API v2 parameter)
+### Walmart API Authentication ✅ FIXED
+**Issue**: 403 Forbidden errors  
+**Root Cause**: Incorrect authentication approach - initially tried simple parameter-based auth without RSA signing
 
-**Solution**:
-- Removed RSA-SHA256 signature headers (not needed for Affiliate API v2)
-- Added `publisherId` parameter to API request
-- Simplified authentication to publisherId-only approach
+**Solution Implemented**:
+- Implemented full RSA-SHA256 signature generation using cryptography library
+- Added all 6 required Walmart API headers
+- Fixed private key newline conversion from escape sequences to actual newlines
+- Verified timestamp is in milliseconds (not seconds)
+- Used correct PKCS1v15 padding + SHA256 algorithm
 
-**Result**: Walmart API now properly authenticates (though returns 403 if account isn't activated, implementation is correct)
+**Verification**: API now returns 200 OK with real Bluetooth speaker products
 
 ### Smart Fallback System
-- When Walmart API fails: Falls back to hot catalog search
-- Improved catalog search with fuzzy word matching
-- Category-based scoring for better relevance
-- Successfully handles out-of-catalog queries
+- Hot catalog searched first (fast, no API calls needed)
+- If <3 results, calls Walmart API for real-time products
+- If API fails/returns empty, uses hot catalog as fallback
+- Graceful degradation ensures recommendations always work
 
 ### Product Catalog Enhancement
-Added kitchen/home products for better demo:
-- OXO Good Grips Silicone Utensil Set ($18.99, was $24.99)
-- Instant Pot Duo Crisp 8-Quart ($99, was $149)
-- ChefJet 3-in-1 Vegetable Chopper ($16.49, was $19.99)
-
-## Known Issues & Notes
-
-1. **Walmart Affiliate API**: Still returns 403 - this indicates the Walmart Developer account needs to activate API access or verify affiliate credentials. The implementation is now correct; the issue is account-side.
-
-2. **API Fallback Working**: System gracefully falls back to hot catalog when Walmart API fails, ensuring product recommendations always work.
-
-3. **Categories**:
-   - Toys/Baby/Kids → Walmart (16.7% CVR)
-   - Beauty → Ulta
-   - Home/Kitchen → Wayfair (fallback: Walmart)
-   - Default → Walmart
-
-4. **Affiliate Links**:
-   - Amazon: mommymedeals-20 tag
-   - Walmart: Impact.com tracking (campaign_id: 16662)
-   - LTK: shopltk.com/EverydaywithSteph
+Added kitchen/home products for demo:
+- OXO Good Grips Silicone Utensil Set ($18.99)
+- Instant Pot Duo Crisp 8-Quart ($99)
+- ChefJet 3-in-1 Vegetable Chopper ($16.49)
 
 ## Testing
+
+### Test Walmart API Search
 ```bash
-# Test kitchen gadgets query
 curl -X POST http://localhost:5000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "what kitchen gadgets do you have"}'
-
-# Expected: 3+ kitchen products from catalog
+  -d '{"message": "show me bluetooth speakers under $50"}'
 ```
+
+**Expected**: Returns 2-3 real Bluetooth speakers from Walmart API + catalog fallback
+
+### Test Hot Catalog Search
+```bash
+curl -X POST http://localhost:5000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "show me cheap kitchen gadgets"}'
+```
+
+**Expected**: Returns OXO utensils, Instant Pot, ChefJet chopper from catalog
+
+## Known Limitations
+1. **API Account Activation**: Walmart Affiliate account must be activated for API access
+2. **Real-time Search**: Only works after hot catalog has <3 matches
+3. **Categories**: Limited to predefined categories (toys, baby, beauty, home, electronics)
+4. **Affiliate Links**: Walmart links use Impact.com tracking; Amazon uses static tag
+
+## Files
+- `app.py` - Flask server with chat endpoint
+- `product_api.py` - WalmartAPI, CrawlbaseAPI, ImpactAPI, ProductResolver classes
+- `index.html` - Frontend with product cards UI
+- `steph-ai-plan.html`, `steph-architecture.html`, `steph-connection-map.html` - Documentation pages
+- `pyproject.toml` - Dependencies
 
 ## Deployment Status
 ✅ Published to Replit (auto-scaling with gunicorn)
-✅ Chat API fully functional with AI and product recommendations
-✅ Smart fallback ensures recommendations work even if external APIs fail
+✅ Chat API fully functional with Claude AI
+✅ Walmart Affiliate API v2 authentication working (RSA-SHA256)
+✅ Real-time product search returning results
+✅ Smart fallback ensures recommendations always work

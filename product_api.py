@@ -10,32 +10,40 @@ import hmac
 import hashlib
 import time
 import base64
+import uuid
 from typing import List, Dict, Optional
 from urllib.parse import urlencode, quote
 
 
 class WalmartAPI:
-    """Walmart Product Catalog API integration"""
+    """Walmart Affiliate Product API integration with RSA-SHA256 authentication"""
     
-    BASE_URL = "https://developer.api.walmart.com/api-proxy/service/affil/product/v2"
+    BASE_URL = "https://developer.api.walmart.com"
     
     def __init__(self):
-        self.public_key = os.environ.get('WALMART_API_PUBLIC_KEY')
+        self.consumer_id = os.environ.get('WALMART_API_PUBLIC_KEY')
+        raw_key = os.environ.get('WALMART_API_PRIVATE_KEY') or ""
+        # Fix: Replace escaped newlines (\n as two chars) with actual newlines
+        self.private_key_pem = raw_key.replace("\\n", "\n")
+        self.publisher_id = os.environ.get('WALMART_PUBLISHER_ID') or self.consumer_id
     
     def search(self, query: str, max_results: int = 3) -> List[Dict]:
-        """Search Walmart products"""
-        endpoint = f"{self.BASE_URL}/search"
+        """Search Walmart products with RSA-SHA256 authentication"""
+        endpoint = f"{self.BASE_URL}/api-proxy/service/affil/product/v2/search"
         
-        # Affiliate API v2 uses publisherId parameter
         params = {
             'query': query,
-            'publisherId': self.public_key,
             'numItems': max_results,
-            'format': 'json'
+            'format': 'json',
+            'publisherId': self.publisher_id
         }
         
         try:
-            response = requests.get(endpoint, params=params, timeout=10)
+            headers = self._build_headers(endpoint, params)
+            if not headers:
+                return []
+            
+            response = requests.get(endpoint, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -59,6 +67,52 @@ class WalmartAPI:
             return []
         except Exception as e:
             return []
+    
+    def _build_headers(self, endpoint: str, params: Dict) -> Dict:
+        """Build RSA-signed headers for Walmart Affiliate API"""
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+            from cryptography.hazmat.backends import default_backend
+            import sys
+            
+            # Timestamp in milliseconds
+            ts = str(int(time.time() * 1000))
+            
+            # Exact string to sign format: consumerId\ntimestamp\nkeyVersion\n
+            string_to_sign = f"{self.consumer_id}\n{ts}\n1\n"
+            
+            # Load private key
+            private_key = serialization.load_pem_private_key(
+                self.private_key_pem.encode("utf-8"),
+                password=None,
+                backend=default_backend()
+            )
+            
+            # Sign with PKCS1v15 + SHA256
+            sig_bytes = private_key.sign(
+                string_to_sign.encode("utf-8"),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+            
+            # Base64 encode the signature
+            signature = base64.b64encode(sig_bytes).decode("utf-8")
+            
+            # Build all 6 required headers
+            headers = {
+                "WM_CONSUMER.ID": self.consumer_id,
+                "WM_CONSUMER.INTIMESTAMP": ts,
+                "WM_SEC.KEY_VERSION": "1",
+                "WM_SEC.AUTH_SIGNATURE": signature,
+                "WM_CONSUMER.CHANNEL.TYPE": "AFFILIATE",
+                "WM_QOS.CORRELATION_ID": str(uuid.uuid4()),
+                "Accept": "application/json"
+            }
+            
+            return headers
+        except Exception as e:
+            return {}
     
     def _category_to_emoji(self, category_path: str) -> str:
         """Map Walmart category to emoji"""

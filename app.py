@@ -97,7 +97,7 @@ def chat():
     try:
         client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
         message = client.messages.create(
-            model='claude-opus-4-1-20250805',
+            model='claude-sonnet-4-20250514',
             max_tokens=256,
             system=SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': user_message}],
