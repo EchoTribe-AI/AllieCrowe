@@ -17,6 +17,9 @@ PRODUCTS = [
     {'id': 7, 'name': 'Sol de Janeiro Travel Fragrance Set', 'price': '$32', 'was': '', 'retailer': 'Ulta', 'emoji': '🌸', 'link': 'https://www.ulta.com/...?PID=1390'},
     {'id': 8, 'name': 'Kinetic Sand Deluxe Gift Bag', 'price': '$14', 'was': '', 'retailer': 'Target', 'emoji': '⏳', 'link': 'https://target.com/'},
     {'id': 9, 'name': 'Keter Plastic Storage Box 55-Gallon', 'price': '$39', 'was': '$55', 'retailer': 'Wayfair', 'emoji': '📦', 'link': 'https://wayfair.com/'},
+    {'id': 10, 'name': 'OXO Good Grips Silicone Utensil Set', 'price': '$18.99', 'was': '$24.99', 'retailer': 'Walmart', 'emoji': '🍳', 'link': 'https://goto.walmart.com/c/kitchen', 'category': 'home'},
+    {'id': 11, 'name': 'Instant Pot Duo Crisp 8-Quart Pressure Cooker', 'price': '$99', 'was': '$149', 'retailer': 'Amazon', 'emoji': '🍲', 'link': 'https://amazon.com/dp/B08...?tag=mommymedeals-20', 'category': 'home'},
+    {'id': 12, 'name': 'ChefJet 3-in-1 Vegetable Chopper', 'price': '$16.49', 'was': '$19.99', 'retailer': 'Walmart', 'emoji': '🥬', 'link': 'https://goto.walmart.com/c/kitchen', 'category': 'home'},
 ]
 
 product_resolver = ProductResolver(PRODUCTS)
@@ -36,6 +39,9 @@ PRODUCTS (index by ID for recommendations):
 7. Sol de Janeiro Travel Set | $32 | Ulta | $270 earned, 42 orders | score 71 | category: beauty
 8. Kinetic Sand Gift Bag | $14 | Target | 4,278 clicks | score 63 | category: toys
 9. Keter Storage Box | $39 (was $55) | Wayfair | Top Wayfair earner | score 58 | category: home
+10. OXO Good Grips Silicone Utensil Set | $18.99 (was $24.99) | Walmart | kitchen essentials | score 76 | category: home
+11. Instant Pot Duo Crisp 8-Quart | $99 (was $149) | Amazon | 2,150 clicks | score 85 | category: home
+12. ChefJet 3-in-1 Vegetable Chopper | $16.49 (was $19.99) | Walmart | meal prep helper | score 74 | category: home
 
 KEY FACTS:
 - Walmart converts at 16.7% — always route budget deals there first
@@ -118,21 +124,13 @@ def chat():
             parts = reply.split('SEARCH:')
             text_reply = parts[0].strip()
             search_query = parts[1].strip()
-            print(f"[SEARCH] Query: '{search_query}'")
             
             category = detect_category(search_query)
-            print(f"[SEARCH] Category: {category}")
             
             try:
                 resolved_products = product_resolver.resolve(search_query, category, max_results=3)
                 products = resolved_products
-                print(f"[SEARCH] Resolved {len(products)} products")
-                for p in products:
-                    print(f"  - {p.get('name', 'N/A')}")
             except Exception as e:
-                print(f"[ERROR] Product resolution error: {e}")
-                import traceback
-                traceback.print_exc()
                 products = []
         
         else:

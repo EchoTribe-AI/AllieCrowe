@@ -21,33 +21,21 @@ class WalmartAPI:
     
     def __init__(self):
         self.public_key = os.environ.get('WALMART_API_PUBLIC_KEY')
-        raw_key = os.environ.get('WALMART_API_PRIVATE_KEY') or ""
-        # Fix: Replace escaped newlines (\n as two chars) with actual newlines
-        self.private_key_pem = raw_key.replace("\\n", "\n")
     
     def search(self, query: str, max_results: int = 3) -> List[Dict]:
         """Search Walmart products"""
-        print(f"[WALMART] Searching for: {query}")
-        print(f"[WALMART] Public key set: {bool(self.public_key)} | Private key PEM set: {bool(self.private_key_pem)}")
-        
         endpoint = f"{self.BASE_URL}/search"
         
+        # Affiliate API v2 uses publisherId parameter
         params = {
             'query': query,
+            'publisherId': self.public_key,
             'numItems': max_results,
             'format': 'json'
         }
         
-        headers = {
-            'WM_SEC.KEY_VERSION': '1',
-            'WM_CONSUMER.ID': self.public_key,
-            'WM_SEC.AUTH_SIGNATURE': self._generate_signature(endpoint, params)
-        }
-        print(f"[WALMART] Calling endpoint: {endpoint}")
-        
         try:
-            response = requests.get(endpoint, params=params, headers=headers, timeout=10)
-            print(f"[WALMART] Response status: {response.status_code}")
+            response = requests.get(endpoint, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -68,46 +56,9 @@ class WalmartAPI:
             return products
             
         except requests.exceptions.RequestException as e:
-            print(f"[WALMART] API error: {e}")
             return []
         except Exception as e:
-            print(f"[WALMART] Unexpected error: {e}")
-            import traceback
-            traceback.print_exc()
             return []
-    
-    def _generate_signature(self, url: str, params: Dict) -> str:
-        """Generate RSA-SHA256 signature for Walmart API authentication"""
-        timestamp = str(int(time.time() * 1000))
-        
-        # Build the string to sign: consumerId\ntimestamp\nkeyVersion\n
-        string_to_sign = f"{self.public_key}\n{timestamp}\n1\n"
-        
-        try:
-            from cryptography.hazmat.primitives import serialization, hashes
-            from cryptography.hazmat.primitives.asymmetric import padding
-            import base64
-            
-            print(f"[WALMART] Loading PEM key...")
-            private_key = serialization.load_pem_private_key(
-                self.private_key_pem.encode('utf-8'),
-                password=None
-            )
-            
-            sig_bytes = private_key.sign(
-                string_to_sign.encode('utf-8'),
-                padding.PKCS1v15(),
-                hashes.SHA256()
-            )
-            
-            signature = base64.b64encode(sig_bytes).decode('utf-8')
-            print(f"[WALMART] RSA signature generated successfully")
-            return signature
-        except Exception as e:
-            print(f"[WALMART] Signature generation error: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
     
     def _category_to_emoji(self, category_path: str) -> str:
         """Map Walmart category to emoji"""
@@ -305,20 +256,15 @@ class ProductResolver:
         3. Generate affiliate links
         """
         results = []
-        print(f"[RESOLVER] Starting resolve for query: '{query}' | category: {category}")
         
         hot_matches = self._search_hot_catalog(query, category)
-        print(f"[RESOLVER] Hot catalog found {len(hot_matches)} matches")
         results.extend(hot_matches)
         
         if len(results) < max_results:
             preferred_retailer = self._get_preferred_retailer(category)
-            print(f"[RESOLVER] Need more results ({len(results)}/{max_results}), trying {preferred_retailer}")
             
             if preferred_retailer == 'walmart':
-                print(f"[RESOLVER] Calling Walmart API for: '{query}'")
                 walmart_products = self.walmart_api.search(query, max_results - len(results))
-                print(f"[RESOLVER] Walmart API returned {len(walmart_products)} products")
                 
                 for product in walmart_products:
                     if product.get('url'):
@@ -332,21 +278,23 @@ class ProductResolver:
                 results.extend(walmart_products)
             
             else:
-                # Fallback: For unimplemented retailers (wayfair, ulta, footlocker, etc), use Walmart
-                print(f"[RESOLVER] Retailer '{preferred_retailer}' not yet implemented, falling back to Walmart")
+                # Fallback: For unimplemented retailers (wayfair, ulta, footlocker, etc), try Walmart
                 walmart_products = self.walmart_api.search(query, max_results - len(results))
-                print(f"[RESOLVER] Walmart fallback returned {len(walmart_products)} products")
                 
-                for product in walmart_products:
-                    if product.get('url'):
-                        product['link'] = self.impact_api.generate_walmart_link(
-                            product['url'], 
-                            product.get('sku'),
-                            sub_id1='chat-recommendation',
-                            sub_id2=product.get('sku')
-                        )
-                
-                results.extend(walmart_products)
+                if walmart_products:
+                    for product in walmart_products:
+                        if product.get('url'):
+                            product['link'] = self.impact_api.generate_walmart_link(
+                                product['url'], 
+                                product.get('sku'),
+                                sub_id1='chat-recommendation',
+                                sub_id2=product.get('sku')
+                            )
+                    results.extend(walmart_products)
+                else:
+                    # If Walmart API fails, search hot catalog as ultimate fallback
+                    hot_fallback = self._search_hot_catalog(query, category)
+                    results.extend(hot_fallback[:max_results - len(results)])
         
         for product in results:
             if not product.get('link'):
@@ -355,21 +303,33 @@ class ProductResolver:
                 elif product['retailer'] == 'Walmart' and product.get('url'):
                     product['link'] = self.impact_api.generate_walmart_link(product['url'], product.get('sku'))
         
-        print(f"[RESOLVER] Returning {len(results[:max_results])} total products")
         return results[:max_results]
     
     def _search_hot_catalog(self, query: str, category: str = None) -> List[Dict]:
-        """Search the Hot Score catalog"""
+        """Search the Hot Score catalog with improved matching"""
         query_lower = query.lower()
+        query_words = set(query_lower.split())
         matches = []
         
         for product in self.hot_catalog:
-            if any(word in product['name'].lower() for word in query_lower.split()):
-                matches.append(product)
-            elif category and product.get('category') == category:
-                matches.append(product)
+            score = 0
+            
+            # Exact word matches in name (higher priority)
+            if any(word in product['name'].lower() for word in query_words if len(word) > 2):
+                score += 3
+            
+            # Category matches
+            if category and category.lower() in product.get('category', '').lower():
+                score += 2
+            elif any(word in product.get('category', '').lower() for word in query_words):
+                score += 1
+            
+            if score > 0:
+                matches.append((score, product))
         
-        return matches
+        # Sort by score and return
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return [m[1] for m in matches]
     
     def _get_preferred_retailer(self, category: str) -> str:
         """Get preferred retailer for category based on CVR rules"""
