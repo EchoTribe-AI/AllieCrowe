@@ -419,7 +419,10 @@
       if (!data.products?.length) { results.classList.remove('visible'); return; }
       results.innerHTML = data.products.map(p => `
         <div class="sr-item" onclick="selectSearchResult('${p.asin || p.ASIN}')">
-          ${p.image_encoded_string ? `<img class="sri-img" src="${p.image_encoded_string}" onerror="this.src=''">` : '<div class="sri-img" style="font-size:18px;display:flex;align-items:center;justify-content:center;">📦</div>'}
+          ${p.image_encoded_string
+            ? `<img class="sri-img" src="${p.image_encoded_string}" onerror="this.src='';this.style.background='var(--bg2)'">`
+            : `<div class="sri-img" style="font-size:18px;display:flex;align-items:center;justify-content:center;background:var(--bg2);">📦</div>`
+          }
           <div class="sri-info">
             <div class="sri-name">${escStr(p.product_name || p.name || '')}</div>
             <div class="sri-meta">${p.company_name || p.brand || ''} · ${p.price || ''}</div>

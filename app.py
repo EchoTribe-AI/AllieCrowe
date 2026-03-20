@@ -264,8 +264,14 @@ def archer_collage():
 @app.route('/archer/product/<asin>')
 def archer_get_product(asin):
     from product_api import ArcherAPI
+    import logging
     a = ArcherAPI()
     product = a.get_by_asins([asin])
+
+    # If found in cache but no image, force a live lookup to backfill
+    if product and not product[0].get('image_encoded_string'):
+        product = []
+
     if not product:
         try:
             r = req.get('https://api.archeraffiliates.com/get_single_product',
@@ -273,17 +279,23 @@ def archer_get_product(asin):
                 params={"asin": asin}, timeout=10)
             if r.status_code == 200:
                 data = r.json()
+                img = data.get("image_encoded_string", "")
+                if img:
+                    conn = sqlite3.connect(a.CACHE_DB)
+                    conn.execute("UPDATE products SET image_encoded_string=? WHERE asin=?", (img, asin))
+                    conn.commit()
+                    conn.close()
                 return jsonify({"product": {
                     "asin": data.get("ASIN"),
                     "product_name": data.get("product_name"),
                     "company_name": data.get("company_name"),
                     "price": data.get("price"),
                     "commission_payout": data.get("commission_payout_aff"),
-                    "image_encoded_string": data.get("image_encoded_string"),
+                    "image_encoded_string": img,
                     "product_category": data.get("product_category")
                 }})
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"[ARCHER] Product lookup failed for {asin}: {e}")
         return jsonify({"error": "Product not found"}), 404
     return jsonify({"product": product[0]})
 
