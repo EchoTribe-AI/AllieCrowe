@@ -2,7 +2,7 @@ import os
 import json
 import sqlite3
 import requests as req
-from flask import Flask, send_from_directory, request, jsonify, render_template
+from flask import Flask, send_from_directory, request, jsonify, render_template, Response
 import anthropic
 from product_api import ProductResolver, detect_category
 
@@ -413,6 +413,27 @@ def archer_track_click():
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+@app.route('/archer/image_proxy')
+def archer_image_proxy():
+    """Proxy an image URL so the browser can download it without CORS issues."""
+    url = request.args.get('url', '').strip()
+    filename = request.args.get('filename', 'product.jpg')
+    if not url or not url.startswith('http'):
+        return jsonify({'error': 'invalid url'}), 400
+    try:
+        r = req.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        r.raise_for_status()
+        content_type = r.headers.get('Content-Type', 'image/jpeg')
+        return Response(
+            r.content,
+            headers={
+                'Content-Type': content_type,
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/archer/ads')
 def archer_ads():
