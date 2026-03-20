@@ -369,7 +369,14 @@
 
   async function loadCatalogPage(page = 1) {
     try {
-      const res = await fetch(`/archer/search?q=&limit=24&page=${page}`);
+      const params = new URLSearchParams({
+        q: state.searchQuery || '',
+        category: state.category || '',
+        min_commission: state.minCommission || 0,
+        limit: 24,
+        page
+      });
+      const res = await fetch(`/archer/search?${params}`);
       const data = await res.json();
       state.catalogResults = data.products || [];
       document.getElementById('catalog-count').textContent = state.catalogResults.length;
@@ -454,12 +461,12 @@
 
     // Apply category filter
     if (state.category) {
-      products = products.filter(p => (p.archer_category || p.category || '').includes(state.category));
+      products = products.filter(p => (p.product_category || p.archer_category || p.category || '').includes(state.category));
     }
     // Apply min commission filter
     if (state.minCommission > 0) {
       products = products.filter(p => {
-        const rate = parseFloat((p.commission || '').replace('%', '')) || 0;
+        const rate = parseFloat((p.commission_payout || p.commission || '').replace('%', '')) || 0;
         return rate >= state.minCommission;
       });
     }
@@ -496,7 +503,7 @@
     const asin = p.asin || p.ASIN || '';
     const name = p.product_name || p.name || '';
     const brand = p.brand || p.company_name || '';
-    const commission = p.commission || p.commission_payout || '';
+    const commission = p.commission_payout || p.commission || '';
     const price = p.price || '';
     const revenue = p.steph_revenue ? `$${p.steph_revenue.toLocaleString()} Steph rev` : '';
     const rating = p.rating || p.avg_rating || '';
@@ -673,12 +680,14 @@
     });
     renderMatchedGrid();
     if (state.searchQuery) searchCatalog(state.searchQuery);
+    loadCatalogPage(1);
   }
 
   function applyFilters() {
     state.minCommission = parseInt(document.getElementById('min-commission').value) || 0;
     state.sortBy = document.getElementById('sort-by').value;
     renderMatchedGrid();
+    loadCatalogPage(1);
   }
 
   function resetFilters() {
@@ -693,8 +702,7 @@
     document.querySelectorAll('.filter-tag').forEach(t => t.classList.toggle('active', t.dataset.cat === ''));
     state.filtered = [...state.matched];
     renderMatchedGrid();
-    document.getElementById('catalog-section').style.display = 'none';
-    document.getElementById('catalog-divider').style.display = 'none';
+    loadCatalogPage(1);
   }
 
   // ── UTILITIES ─────────────────────────────────────────

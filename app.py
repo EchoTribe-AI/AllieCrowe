@@ -186,12 +186,20 @@ def archer_products():
 
 @app.route('/archer/matched')
 def archer_matched():
-    """Return all 217 matched ASINs from the SQLite cache."""
+    """Return all 217 matched ASINs from the SQLite cache, merged with revenue data from JSON."""
     from product_api import ArcherAPI
     a = ArcherAPI()
-    products = a.get_by_asins([p['asin'] for p in a._load_matched_json()])
+    matched_json = a._load_matched_json()
+    revenue_map = {p['asin']: p for p in matched_json}
+    asins = [p['asin'] for p in matched_json]
+    products = a.get_by_asins(asins)
+    for p in products:
+        asin = p.get('asin', '')
+        if asin in revenue_map:
+            p['steph_revenue'] = revenue_map[asin].get('steph_revenue', 0)
+            p['steph_units'] = revenue_map[asin].get('steph_units', 0)
     if not products:
-        products = a._load_matched_json()
+        products = matched_json
     return jsonify({'products': products})
 
 @app.route('/archer/search')
