@@ -650,8 +650,128 @@ class ArcherAPI:
         }
 
 
-# Singleton — import this everywhere
+class LevantaAPI:
+    """Levanta Creator API client."""
+
+    LEVANTA_BASE = "https://app.levanta.io/api/creator/v1"
+
+    def __init__(self):
+        self.api_key = os.environ.get("LEVANTA_API_KEY")
+
+    def _headers(self):
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    # ── BRANDS ───────────────────────────────────────────
+    def get_brands(self, access_only=True, marketplace="amazon.com", limit=100):
+        params = {"limit": limit, "marketplace": marketplace}
+        if access_only:
+            params["access"] = "true"
+        r = requests.get(f"{self.LEVANTA_BASE}/brands",
+            headers=self._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # ── PRODUCTS ─────────────────────────────────────────
+    def get_products(self, limit=100, cursor=None, marketplace="amazon.com"):
+        params = {"limit": limit, "marketplace": marketplace}
+        if cursor:
+            params["cursor"] = cursor
+        r = requests.get(f"{self.LEVANTA_BASE}/products",
+            headers=self._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def get_product_by_asin(self, asin, marketplace="amazon.com"):
+        r = requests.get(f"{self.LEVANTA_BASE}/products/{asin}",
+            headers=self._headers(),
+            params={"marketplace": marketplace}, timeout=10)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+    # ── LINKS ────────────────────────────────────────────
+    def create_product_link(self, asin, source_id=None, marketplace="amazon.com"):
+        """Create a tracked Levanta affiliate link for a given ASIN."""
+        payload = {"asin": asin, "marketplace": marketplace}
+        if source_id:
+            payload["sourceId"] = source_id
+        r = requests.post(f"{self.LEVANTA_BASE}/links",
+            headers=self._headers(), json=payload, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    # ── DEALS ────────────────────────────────────────────
+    def get_deals(self, limit=50):
+        """Live deals feed — great for Steph's deals content."""
+        r = requests.get(f"{self.LEVANTA_BASE}/deals",
+            headers=self._headers(), params={"limit": limit}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # ── CPC CAMPAIGNS ────────────────────────────────────
+    def get_cpc_campaigns(self, limit=50):
+        r = requests.get(f"{self.LEVANTA_BASE}/cost-per-click-campaigns",
+            headers=self._headers(), params={"limit": limit}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # ── REPORTS ──────────────────────────────────────────
+    def get_reports(self, limit=100):
+        r = requests.get(f"{self.LEVANTA_BASE}/reports",
+            headers=self._headers(), params={"limit": limit}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # ── FORMAT FOR FRONTEND ──────────────────────────────
+    def format_for_frontend(self, product, link_url=None):
+        """Convert Levanta product to the same shape the UI expects."""
+        commission = product.get("commission", 0)
+        commission_str = f"{int(commission * 100)}%" if commission else ""
+        pricing = product.get("pricing", {})
+        price = pricing.get("price", "")
+        return {
+            "asin": product.get("asin", ""),
+            "product_name": product.get("title") or product.get("name") or "",
+            "company_name": product.get("brandName") or product.get("brand") or "",
+            "price": f"${price}" if price else "",
+            "commission_payout": commission_str,
+            "image_encoded_string": product.get("image") or product.get("imageUrl") or "",
+            "product_category": product.get("category") or product.get("productGroup") or "",
+            "link": link_url or "",
+            "source": "levanta",
+            "marketplace": product.get("marketplace", "amazon.com"),
+            "brand_id": product.get("brandId", ""),
+            "deal": product.get("deal") or {}
+        }
+
+    def search_products(self, query, limit=24):
+        """
+        Levanta doesn't have a search endpoint — pull products and filter locally.
+        Returns products filtered by query match on title/brand/asin.
+        """
+        results = []
+        cursor = None
+        pages = 0
+        while len(results) < limit * 3 and pages < 5:
+            data = self.get_products(limit=100, cursor=cursor)
+            products = data.get("products", [])
+            for p in products:
+                title = (p.get("title") or p.get("name") or "").lower()
+                brand = (p.get("brandName") or p.get("brand") or "").lower()
+                asin = (p.get("asin") or "").lower()
+                if query.lower() in title or query.lower() in brand or query.lower() in asin:
+                    results.append(p)
+            cursor = data.get("cursor")
+            if not cursor or not products:
+                break
+            pages += 1
+        return results[:limit]
+
+
+# Singletons — import these everywhere
 archer_api = ArcherAPI()
+levanta_api = LevantaAPI()
 
 
 class ProductResolver:

@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import logging
 import requests as req
 from flask import Flask, send_from_directory, request, jsonify, render_template, Response
 import anthropic
@@ -220,17 +221,40 @@ def archer_matched():
 
 @app.route('/archer/search')
 def archer_search():
-    """Search the Archer catalog SQLite cache."""
-    from product_api import ArcherAPI
-    q = request.args.get('q', '')
+    """Search Archer and/or Levanta catalogs. Supports network=archer|levanta|both."""
+    from product_api import ArcherAPI, LevantaAPI
+    q = request.args.get('q', '').strip()
     category = request.args.get('category', '')
     min_commission = int(request.args.get('min_commission', 0))
     limit = int(request.args.get('limit', 24))
-    a = ArcherAPI()
-    results = a.search_catalog(q, category=category or None, limit=limit)
-    if min_commission > 0:
-        results = [p for p in results if float((p.get('commission_payout') or '0').replace('%', '') or 0) >= min_commission]
-    return jsonify({'products': results})
+    network = request.args.get('network', 'archer')
+
+    results = []
+
+    if network in ('archer', 'both'):
+        a = ArcherAPI()
+        archer_results = a.search_catalog(q, category=category or None, limit=limit)
+        if min_commission > 0:
+            archer_results = [p for p in archer_results if
+                float((p.get('commission_payout') or '0').replace('%', '') or 0) >= min_commission]
+        for p in archer_results:
+            p['source'] = 'archer'
+        results.extend(archer_results)
+
+    if network in ('levanta', 'both') and q:
+        lv = LevantaAPI()
+        try:
+            levanta_results = lv.search_products(q, limit=limit)
+            formatted = [lv.format_for_frontend(p) for p in levanta_results]
+            if min_commission > 0:
+                formatted = [p for p in formatted if
+                    float((p.get('commission_payout') or '0').replace('%', '') or 0) >= min_commission]
+            results.extend(formatted)
+        except Exception as e:
+            logging.error(f"[LEVANTA] Search failed: {e}")
+
+    cap = limit * 2 if network == 'both' else limit
+    return jsonify({'products': results[:cap]})
 
 @app.route('/archer/backfill_images')
 def archer_backfill_images():
@@ -554,6 +578,60 @@ def archer_list_campaigns():
             'created_at': r['created_at'][:10] if r['created_at'] else ''
         })
     return jsonify({'campaigns': campaigns})
+
+@app.route('/levanta/generate_link', methods=['POST'])
+def levanta_generate_link():
+    from product_api import LevantaAPI
+    data = request.get_json() or {}
+    asin = data.get('asin', '').strip()
+    label = data.get('label', asin)
+    if not asin:
+        return jsonify({'error': 'asin is required'}), 400
+    lv = LevantaAPI()
+    try:
+        result = lv.create_product_link(asin, source_id=label)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/levanta/deals')
+def levanta_deals():
+    from product_api import LevantaAPI
+    lv = LevantaAPI()
+    try:
+        return jsonify(lv.get_deals())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/webhooks/levanta', methods=['POST'])
+def levanta_webhook():
+    """Receive real-time Levanta events."""
+    import hmac as hmac_lib, hashlib
+    secret = os.environ.get('LEVANTA_WEBHOOK_SECRET', '')
+    sig_header = request.headers.get('x-levanta-hmac-sha256', '')
+    if secret:
+        expected = hmac_lib.new(
+            secret.encode(), request.get_data(), hashlib.sha256
+        ).hexdigest()
+        if not hmac_lib.compare_digest(expected, sig_header):
+            return jsonify({'error': 'Invalid signature'}), 401
+
+    event = request.get_json() or {}
+    event_type = event.get('type', '')
+    data = event.get('data', {})
+    logging.info(f"[LEVANTA WEBHOOK] Event: {event_type} | Data: {data}")
+
+    if event_type == 'product.access.gained':
+        asin = data.get('asin')
+        logging.info(f"[LEVANTA] New product access: {asin} at {data.get('commission', 0) * 100:.0f}%")
+    elif event_type == 'link.disabled':
+        logging.warning(f"[LEVANTA] Link disabled: {data.get('id')}")
+    elif event_type == 'product.added':
+        logging.info(f"[LEVANTA] New product in catalog: {data.get('asin')}")
+    elif event_type == 'product.removed':
+        logging.warning(f"[LEVANTA] Product removed: {data.get('asin')}")
+
+    return jsonify({'received': True})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=os.environ.get('FLASK_DEBUG', 'false').lower() == 'true')

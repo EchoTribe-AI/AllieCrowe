@@ -218,6 +218,16 @@
       </div>
     </div>
 
+    <!-- NETWORK TOGGLE -->
+    <div class="sidebar-section">
+      <div class="ss-label">Network</div>
+      <div class="filter-tag-wrap">
+        <button class="filter-tag active" id="net-archer" onclick="setNetwork('archer')">🏹 Archer</button>
+        <button class="filter-tag" id="net-levanta" onclick="setNetwork('levanta')">⚡ Levanta</button>
+        <button class="filter-tag" id="net-both" onclick="setNetwork('both')">🔀 Both</button>
+      </div>
+    </div>
+
     <!-- FILTERS -->
     <div class="sidebar-section">
       <div class="ss-label">Category</div>
@@ -340,7 +350,8 @@
     minCommission: 0,
     sortBy: 'revenue',
     searchTimer: null,
-    linkedCount: 0
+    linkedCount: 0,
+    network: 'archer'
   };
 
   // ── INIT ──────────────────────────────────────────────
@@ -374,7 +385,8 @@
         category: state.category || '',
         min_commission: state.minCommission || 0,
         limit: 24,
-        page
+        page,
+        network: state.network
       });
       const res = await fetch(`/archer/search?${params}`);
       const data = await res.json();
@@ -395,7 +407,7 @@
       return;
     }
     try {
-      const params = new URLSearchParams({ q: query, category: state.category, min_commission: state.minCommission, limit: 24 });
+      const params = new URLSearchParams({ q: query, category: state.category, min_commission: state.minCommission, limit: 24, network: state.network });
       const res = await fetch(`/archer/search?${params}`);
       const data = await res.json();
       state.catalogResults = data.products || [];
@@ -408,7 +420,7 @@
     }
   }
 
-  async function generateLink(asin, btn, card) {
+  async function generateLink(asin, btn, card, source) {
     if (state.linkedAsins[asin]) {
       copyToClipboard(state.linkedAsins[asin]);
       showToast('Link copied!');
@@ -418,8 +430,10 @@
     btn.classList.add('pc-btn-loading');
     btn.disabled = true;
     try {
-      const label = `steph-archer-${asin.toLowerCase()}-${Date.now()}`;
-      const res = await fetch('/archer/generate_link', {
+      const isLevanta = (source || 'archer') === 'levanta';
+      const endpoint = isLevanta ? '/levanta/generate_link' : '/archer/generate_link';
+      const label = `steph-${isLevanta ? 'levanta' : 'archer'}-${asin.toLowerCase()}-${Date.now()}`;
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ asin, label })
@@ -527,6 +541,7 @@
     <div class="product-card ${isSelected ? 'selected' : ''} ${isLinked ? 'linked' : ''}" 
          id="card-${asin}" onclick="toggleSelect('${asin}', '${escStr(name)}', '${commission}')">
       ${isMatched ? '<div class="pc-matched-badge">✓ Matched</div>' : ''}
+      ${p.source === 'levanta' ? '<div class="pc-matched-badge" style="background:#e8f8f4;color:#0a6b52;border-color:rgba(10,107,82,0.3);">⚡ Levanta</div>' : ''}
       <div class="pc-check">${isSelected || isLinked ? '✓' : ''}</div>
       <div class="pc-image">
         ${p.image_encoded_string ?
@@ -553,7 +568,7 @@
       <div class="pc-footer" onclick="event.stopPropagation()">
         <button class="pc-btn pc-btn-link ${isLinked ? 'pc-btn-copy copied' : ''}" 
                 id="btn-link-${asin}"
-                onclick="generateLink('${asin}', this, document.getElementById('card-${asin}'))">
+                onclick="generateLink('${asin}', this, document.getElementById('card-${asin}'), '${p.source || 'archer'}')">
           ${isLinked ? '✓ Copied' : 'Get Link'}
         </button>
         <button class="pc-btn pc-btn-copy" onclick="copyAsin('${asin}')">ASIN</button>
@@ -673,9 +688,18 @@
     state.catalogResults = [];
   }
 
+  function setNetwork(net) {
+    state.network = net;
+    ['archer', 'levanta', 'both'].forEach(n => {
+      document.getElementById(`net-${n}`)?.classList.toggle('active', n === net);
+    });
+    if (state.searchQuery) searchCatalog(state.searchQuery);
+    else loadCatalogPage(1);
+  }
+
   function setCategory(cat) {
     state.category = cat;
-    document.querySelectorAll('.filter-tag').forEach(t => {
+    document.querySelectorAll('.filter-tag[data-cat]').forEach(t => {
       t.classList.toggle('active', t.dataset.cat === cat);
     });
     renderMatchedGrid();
