@@ -241,20 +241,34 @@ def archer_search():
             p['source'] = 'archer'
         results.extend(archer_results)
 
-    if network in ('levanta', 'both') and q:
+    levanta_formatted = []
+    if network in ('levanta', 'both'):
         lv = LevantaAPI()
         try:
-            levanta_results = lv.search_products(q, limit=limit)
-            formatted = [lv.format_for_frontend(p) for p in levanta_results]
+            if q:
+                lv_raw_list = lv.search_products(q, limit=limit)
+            else:
+                # Browse mode — top 20 accessible products by commission descending
+                data = lv.get_products(limit=100)
+                lv_raw_list = sorted(
+                    [p for p in data.get('products', []) if p.get('access') is True],
+                    key=lambda p: p.get('commission', 0),
+                    reverse=True
+                )[:20]
+            formatted = [lv.format_for_frontend(p) for p in lv_raw_list]
             if min_commission > 0:
                 formatted = [p for p in formatted if
                     float((p.get('commission_payout') or '0').replace('%', '') or 0) >= min_commission]
-            results.extend(formatted)
+            levanta_formatted = formatted
         except Exception as e:
-            logging.error(f"[LEVANTA] Search failed: {e}")
+            logging.error(f"[LEVANTA] Search/browse failed: {e}")
 
     cap = limit * 2 if network == 'both' else limit
-    return jsonify({'products': results[:cap]})
+    return jsonify({
+        'products': (results + levanta_formatted)[:cap],
+        'archer': results[:limit],
+        'levanta': levanta_formatted[:limit]
+    })
 
 @app.route('/archer/backfill_images')
 def archer_backfill_images():

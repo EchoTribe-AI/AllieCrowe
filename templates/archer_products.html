@@ -400,17 +400,48 @@
         min_commission: state.minCommission || 0,
         limit: 24,
         page,
-        network: state.network
+        network: 'archer'  // browse always fetches Archer via this function
       });
       const res = await fetch(`/archer/search?${params}`);
       const data = await res.json();
-      state.catalogResults = data.products || [];
+      state.catalogResults = data.archer || data.products || [];
+      const show = state.catalogResults.length > 0 && state.network !== 'levanta';
       document.getElementById('catalog-count').textContent = state.catalogResults.length;
-      document.getElementById('catalog-section').style.display = 'block';
-      document.getElementById('catalog-divider').style.display = 'block';
-      renderCatalogGrid();
+      document.getElementById('catalog-section').style.display = show ? 'block' : 'none';
+      document.getElementById('catalog-divider').style.display = show ? 'block' : 'none';
+      if (show) renderCatalogGrid();
+
+      // Load Levanta browse if toggle says to
+      if (state.network === 'levanta' || state.network === 'both') {
+        await loadLevantaBrowse();
+      } else {
+        document.getElementById('levanta-section').style.display = 'none';
+        document.getElementById('levanta-divider').style.display = 'none';
+      }
     } catch(e) {
       console.error('Failed to load catalog page:', e);
+    }
+  }
+
+  async function loadLevantaBrowse() {
+    try {
+      const params = new URLSearchParams({
+        q: '',
+        category: state.category || '',
+        min_commission: state.minCommission || 0,
+        limit: 20,
+        network: 'levanta'
+      });
+      const res = await fetch(`/archer/search?${params}`);
+      const data = await res.json();
+      state.levantaResults = data.levanta || [];
+      const show = state.levantaResults.length > 0;
+      document.getElementById('levanta-count').textContent = state.levantaResults.length;
+      document.getElementById('levanta-section').style.display = show ? 'block' : 'none';
+      document.getElementById('levanta-divider').style.display = show ? 'block' : 'none';
+      if (show) renderLevantaGrid();
+    } catch(e) {
+      console.error('Levanta browse failed:', e);
     }
   }
 
@@ -741,8 +772,6 @@
       searchCatalog(state.searchQuery);
     } else {
       loadCatalogPage(1);
-      document.getElementById('levanta-section').style.display = 'none';
-      document.getElementById('levanta-divider').style.display = 'none';
     }
   }
 
