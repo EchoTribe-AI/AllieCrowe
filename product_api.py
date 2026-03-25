@@ -656,14 +656,14 @@ archer_api = ArcherAPI()
 
 class URLGeniusAPI:
     """URLGenius deep link API client."""
-    BASE = "https://api.urlgeni.us/v2"
+    BASE = "https://api.urlgeni.us/api/v2"
 
     def __init__(self):
         self.api_key = os.environ.get("URLGENIUS_API_KEY", "")
 
     def _headers(self):
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "api-key": self.api_key,
             "Content-Type": "application/json",
         }
 
