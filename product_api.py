@@ -654,6 +654,61 @@ class ArcherAPI:
 archer_api = ArcherAPI()
 
 
+class URLGeniusAPI:
+    """URLGenius deep link API client."""
+    BASE = "https://api.urlgeni.us/v2"
+
+    def __init__(self):
+        self.api_key = os.environ.get("URLGENIUS_API_KEY", "")
+
+    def _headers(self):
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def create_link(self, destination_url, utm_source=None, utm_medium=None,
+                    utm_campaign=None, utm_content=None):
+        """
+        Create a URLGenius deep link.
+        destination_url: the affiliate URL to wrap (Amazon, Walmart, etc.)
+        UTM params are embedded so attribution flows through to app stores.
+        """
+        payload = {"url": destination_url}
+        utms = {}
+        if utm_source:   utms["utm_source"]   = utm_source
+        if utm_medium:   utms["utm_medium"]   = utm_medium
+        if utm_campaign: utms["utm_campaign"] = utm_campaign
+        if utm_content:  utms["utm_content"]  = utm_content
+        if utms:
+            payload["utm"] = utms
+        r = requests.post(f"{self.BASE}/links", headers=self._headers(),
+                          json=payload, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def list_links(self, limit=50):
+        """List all created links."""
+        r = requests.get(f"{self.BASE}/links", headers=self._headers(),
+                         params={"limit": limit}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def get_link_stats(self, link_id):
+        """Fetch 30-day stats for a single link."""
+        r = requests.get(f"{self.BASE}/links/{link_id}", headers=self._headers(),
+                         timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def delete_link(self, link_id):
+        """Remove a link."""
+        r = requests.delete(f"{self.BASE}/links/{link_id}", headers=self._headers(),
+                            timeout=10)
+        r.raise_for_status()
+        return r.status_code == 204
+
+
 class ProductResolver:
     """Smart product resolution with CVR-based routing"""
 

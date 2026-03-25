@@ -3,8 +3,11 @@ import json
 import sqlite3
 import requests as req
 from flask import Flask, send_from_directory, request, jsonify, render_template, Response
+from dotenv import load_dotenv
 import anthropic
 from product_api import ProductResolver, detect_category
+
+load_dotenv()  # loads .env locally; Replit Secrets override in production
 
 app = Flask(__name__)
 
@@ -554,6 +557,68 @@ def archer_list_campaigns():
             'created_at': r['created_at'][:10] if r['created_at'] else ''
         })
     return jsonify({'campaigns': campaigns})
+
+# ── URLGENIUS ─────────────────────────────────────────────────────────────────
+
+@app.route('/urlgenius/test')
+def urlgenius_test():
+    """Quick connectivity test — creates one deep link and returns the result."""
+    from product_api import URLGeniusAPI
+    ug = URLGeniusAPI()
+    if not ug.api_key:
+        return jsonify({'error': 'URLGENIUS_API_KEY not set. Add it to .env or Replit Secrets.'}), 400
+    try:
+        result = ug.create_link(
+            destination_url="https://www.amazon.com/dp/B0C84VRPWL",
+            utm_source="steph-ai",
+            utm_medium="ai-agent",
+            utm_campaign="mommymeai-test",
+            utm_content="B0C84VRPWL"
+        )
+        return jsonify({'status': 'connected', 'result': result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/urlgenius/create_link', methods=['POST'])
+def urlgenius_create_link():
+    """
+    Create a URLGenius deep link for any affiliate URL.
+    Body: { url, utm_source, utm_medium, utm_campaign, utm_content }
+    """
+    from product_api import URLGeniusAPI
+    body = request.get_json() or {}
+    url = body.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'url is required'}), 400
+    ug = URLGeniusAPI()
+    if not ug.api_key:
+        return jsonify({'error': 'URLGENIUS_API_KEY not set'}), 400
+    try:
+        result = ug.create_link(
+            destination_url=url,
+            utm_source=body.get('utm_source', 'steph-ai'),
+            utm_medium=body.get('utm_medium', 'ai-agent'),
+            utm_campaign=body.get('utm_campaign'),
+            utm_content=body.get('utm_content'),
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/urlgenius/links')
+def urlgenius_list_links():
+    """List all URLGenius links."""
+    from product_api import URLGeniusAPI
+    ug = URLGeniusAPI()
+    if not ug.api_key:
+        return jsonify({'error': 'URLGENIUS_API_KEY not set'}), 400
+    try:
+        return jsonify(ug.list_links())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=os.environ.get('FLASK_DEBUG', 'false').lower() == 'true')
