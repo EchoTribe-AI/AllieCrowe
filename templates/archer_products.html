@@ -254,6 +254,19 @@
       <button class="filter-reset" onclick="resetFilters()">Reset all filters</button>
     </div>
 
+    <!-- LINK NETWORK -->
+    <div class="sidebar-section">
+      <div class="ss-label">Link Type</div>
+      <div class="filter-tag-wrap">
+        <button class="filter-tag active" id="ln-amazon" onclick="setLinkNetwork('amazon')">🔗 Amazon</button>
+        <button class="filter-tag" id="ln-archer" onclick="setLinkNetwork('archer')">🏹 Archer</button>
+        <button class="filter-tag" id="ln-levanta" onclick="setLinkNetwork('levanta')">⚡ Levanta</button>
+      </div>
+      <div id="ln-desc" style="font-size:10px;color:var(--text4);margin-top:4px;">
+        Organic tag: mommymedeals-20 · Wrapped in URLgenius
+      </div>
+    </div>
+
     <!-- SELECTION TRAY -->
     <div class="sidebar-section">
       <div class="ss-label">Selected (<span id="tray-num">0</span>)</div>
@@ -340,7 +353,8 @@
     minCommission: 0,
     sortBy: 'revenue',
     searchTimer: null,
-    linkedCount: 0
+    linkedCount: 0,
+    linkNetwork: 'amazon'   // amazon | archer | levanta
   };
 
   // ── INIT ──────────────────────────────────────────────
@@ -418,32 +432,41 @@
     btn.classList.add('pc-btn-loading');
     btn.disabled = true;
     try {
-      const label = `steph-archer-${asin.toLowerCase()}-${Date.now()}`;
-      const res = await fetch('/archer/generate_link', {
+      const res = await fetch('/urlgenius/smart_link', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ asin, label })
+        body: JSON.stringify({
+          asin,
+          network: state.linkNetwork,
+          utm_source: state.linkNetwork === 'amazon' ? 'organic' : 'steph-ai',
+          utm_medium: state.linkNetwork === 'amazon' ? 'social' : 'ai-agent',
+          utm_campaign: 'mommymeai',
+          utm_content: asin
+        })
       });
       const data = await res.json();
-      const url = data.attribution_link || data.url || data.link;
+      const url = data.genius_url || data.affiliate_url;
       if (url) {
         state.linkedAsins[asin] = url;
         state.linkedCount++;
         document.getElementById('stat-linked').textContent = state.linkedCount;
         card.classList.add('linked');
         card.querySelector('.pc-check').textContent = '✓';
-        // show link display
         const ld = card.querySelector('.link-display');
-        if (ld) { ld.querySelector('.ld-url').textContent = url; ld.classList.add('visible'); }
+        if (ld) {
+          ld.querySelector('.ld-label').textContent =
+            data.urlgenius ? `URLgenius · ${data.network}` : `${data.network} link`;
+          ld.querySelector('.ld-url').textContent = url;
+          ld.classList.add('visible');
+        }
         copyToClipboard(url);
         btn.textContent = '✓ Copied';
         btn.classList.remove('pc-btn-loading');
         btn.classList.add('pc-btn-copy', 'copied');
         btn.disabled = false;
-        // update tray if selected
         const trayItem = state.tray.find(t => t.asin === asin);
         if (trayItem) trayItem.link = url;
-        showToast('Link generated & copied!');
+        showToast(`URLgenius ${data.network} link copied!`);
       }
     } catch(e) {
       btn.textContent = 'Get Link';
@@ -451,6 +474,19 @@
       btn.disabled = false;
       showToast('Link generation failed — check API');
     }
+  }
+
+  function setLinkNetwork(net) {
+    state.linkNetwork = net;
+    ['amazon','archer','levanta'].forEach(n => {
+      document.getElementById(`ln-${n}`)?.classList.toggle('active', n === net);
+    });
+    const desc = {
+      amazon:  "Organic tag: mommymedeals-20 · Wrapped in URLgenius",
+      archer:  "Archer attribution · Wrapped in URLgenius",
+      levanta: "Levanta tracked link · Wrapped in URLgenius"
+    };
+    document.getElementById('ln-desc').textContent = desc[net] || '';
   }
 
   // ── RENDER ────────────────────────────────────────────

@@ -560,6 +560,91 @@ def archer_list_campaigns():
 
 # ── URLGENIUS ─────────────────────────────────────────────────────────────────
 
+AMAZON_TAG = os.environ.get('AMAZON_AFFILIATE_TAG', 'mommymedeals-20')
+
+
+@app.route('/urlgenius/smart_link', methods=['POST'])
+def urlgenius_smart_link():
+    """
+    Generate a URLGenius deep link for a product.
+    Builds the affiliate URL based on chosen network:
+      amazon  → amazon.com/dp/{asin}?tag=mommymedeals-20  (default)
+      archer  → Archer attribution link wrapped in URLGenius
+      levanta → Levanta tracked link wrapped in URLGenius
+    Returns { genius_url, affiliate_url, network }
+    """
+    from product_api import ArcherAPI, LevantaAPI, URLGeniusAPI
+    body = request.get_json() or {}
+    asin = body.get('asin', '').strip()
+    network = body.get('network', 'amazon')   # amazon | archer | levanta
+    utm_source  = body.get('utm_source', 'steph-ai')
+    utm_medium  = body.get('utm_medium', 'ai-agent')
+    utm_campaign = body.get('utm_campaign', 'mommymeai')
+    utm_content = body.get('utm_content', asin)
+
+    if not asin:
+        return jsonify({'error': 'asin is required'}), 400
+
+    affiliate_url = None
+
+    if network == 'amazon':
+        affiliate_url = f"https://www.amazon.com/dp/{asin}?tag={AMAZON_TAG}"
+        utm_source = body.get('utm_source', 'organic')
+        utm_medium = body.get('utm_medium', 'social')
+
+    elif network == 'archer':
+        a = ArcherAPI()
+        label = f"steph-archer-{asin.lower()}-{int(__import__('time').time())}"
+        result = a.generate_link(asin, label=label)
+        if not result:
+            return jsonify({'error': 'Archer link generation failed'}), 500
+        affiliate_url = (result.get('attribution_link') or result.get('url')
+                         or result.get('link') or result.get('short_url'))
+        if not affiliate_url:
+            return jsonify({'error': 'Archer returned no URL', 'raw': result}), 500
+
+    elif network == 'levanta':
+        lv = LevantaAPI()
+        try:
+            result = lv.create_product_link(asin)
+            affiliate_url = (result.get('url') or result.get('link')
+                             or result.get('trackingUrl') or result.get('attribution_link'))
+            if not affiliate_url:
+                return jsonify({'error': 'Levanta returned no URL', 'raw': result}), 500
+        except Exception as e:
+            return jsonify({'error': f'Levanta link generation failed: {e}'}), 500
+
+    else:
+        return jsonify({'error': f'Unknown network: {network}'}), 400
+
+    # Wrap in URLGenius
+    ug = URLGeniusAPI()
+    if not ug.api_key:
+        # No URLGenius key — return raw affiliate URL as fallback
+        return jsonify({'genius_url': affiliate_url, 'affiliate_url': affiliate_url,
+                        'network': network, 'urlgenius': False})
+    try:
+        ug_result = ug.create_link(
+            destination_url=affiliate_url,
+            utm_source=utm_source,
+            utm_medium=utm_medium,
+            utm_campaign=utm_campaign,
+            utm_content=utm_content,
+        )
+        genius_url = ug_result.get('link', {}).get('genius_url', affiliate_url)
+        return jsonify({
+            'genius_url': genius_url,
+            'affiliate_url': affiliate_url,
+            'network': network,
+            'urlgenius': True,
+            'link_id': ug_result.get('link', {}).get('id'),
+        })
+    except Exception as e:
+        logging.error(f"[URLGENIUS] smart_link failed: {e}")
+        return jsonify({'genius_url': affiliate_url, 'affiliate_url': affiliate_url,
+                        'network': network, 'urlgenius': False})
+
+
 @app.route('/urlgenius/test')
 def urlgenius_test():
     """Quick connectivity test — creates one deep link and returns the result."""
