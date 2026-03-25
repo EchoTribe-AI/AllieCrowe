@@ -287,6 +287,60 @@ def detect_category(query: str) -> str:
     return 'general'
 
 
+# ── NETWORK MATCHER REGISTRY ──────────────────────────────────────────────────
+# Each affiliate network implements get_asin_set() → set of ASINs it supports.
+# To add a new network: subclass NetworkMatcher, add to NETWORK_MATCHERS list.
+
+class NetworkMatcher:
+    name = ''
+    def get_asin_set(self) -> set:
+        raise NotImplementedError
+
+
+class ArcherNetworkMatcher(NetworkMatcher):
+    name = 'archer'
+
+    def __init__(self, db_path):
+        self.db_path = db_path
+
+    def get_asin_set(self) -> set:
+        if not os.path.exists(self.db_path):
+            return set()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            rows = conn.execute(
+                "SELECT asin FROM products WHERE product_status='active' OR product_status IS NULL"
+            ).fetchall()
+            conn.close()
+            return {r[0] for r in rows if r[0]}
+        except Exception as e:
+            logging.warning(f"[ARCHER] get_asin_set failed: {e}")
+            return set()
+
+
+class LevantaNetworkMatcher(NetworkMatcher):
+    """
+    Reads data/network_cache_levanta.json — a flat list of ASINs that the
+    levanta-integration branch writes after syncing the Levanta catalog.
+    Returns empty set until that file exists.
+    """
+    name = 'levanta'
+    CACHE_PATH = 'data/network_cache_levanta.json'
+
+    def get_asin_set(self) -> set:
+        if not os.path.exists(self.CACHE_PATH):
+            return set()
+        try:
+            with open(self.CACHE_PATH) as f:
+                data = json.load(f)
+            # Accept either a plain list or {"asins": [...]}
+            asins = data if isinstance(data, list) else data.get('asins', [])
+            return set(asins)
+        except Exception as e:
+            logging.warning(f"[LEVANTA] get_asin_set failed: {e}")
+            return set()
+
+
 class ArcherAPI:
     """Archer Affiliates API client with auto-refreshing bearer token and local SQLite catalog cache."""
 
@@ -611,6 +665,171 @@ class ArcherAPI:
         except Exception:
             return []
 
+    # ── EARNINGS CSV MATCHING ─────────────────────────────
+
+    # Canonical upload path — always written by the upload endpoint
+    EARNINGS_CSV_PATH   = 'data/earnings_latest.csv'
+    # Legacy fallback for existing local file
+    EARNINGS_CSV_LEGACY = 'data/2025-Q12026 amazon asin earnings.csv'
+    SCAN_META_PATH      = 'data/scan_meta.json'
+
+    def load_earnings_csv(self):
+        """
+        Parse the earnings CSV into a dict keyed by ASIN.
+        Prefers data/earnings_latest.csv; falls back to legacy filename.
+        Aggregates duplicate ASINs across time periods by summing numeric fields.
+        """
+        import csv
+        path = self.EARNINGS_CSV_PATH
+        if not os.path.exists(path):
+            path = self.EARNINGS_CSV_LEGACY
+        if not os.path.exists(path):
+            logging.warning('[SCAN] No earnings CSV found. Upload via /archer/upload_earnings')
+            return {}
+
+        def clean_num(val):
+            s = (val or '').replace('$', '').replace(',', '').replace('%', '').strip()
+            return float(s) if s and s not in ('-', 'N/A', '') else 0.0
+
+        earnings = {}
+        with open(path, newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                asin = row.get('Product ASIN', '').strip()
+                if not asin:
+                    continue
+                row_data = {
+                    'clicks':                 int(clean_num(row.get('Clicks', '0'))),
+                    'items_ordered':          int(clean_num(row.get('Items Ordered', '0'))),
+                    'direct_ordered':         int(clean_num(row.get('Direct Items Ordered', '0'))),
+                    'conversion_rate':        row.get('Product Conversion Rate', '').strip(),
+                    'amazon_commission_rate': row.get('Commission Rate', '').strip(),
+                    'items_shipped':          int(clean_num(row.get('Items Shipped', '0'))),
+                    'items_returned':         int(clean_num(row.get('Items Returned', '0'))),
+                    'shipped_revenue':        clean_num(row.get('Items Shipped Revenue', '0')),
+                    'total_earnings':         clean_num(row.get('Total Earnings', '0')),
+                    'time_period':            row.get('Time Period', '').strip(),
+                }
+                if asin in earnings:
+                    # Aggregate same ASIN across multiple time periods
+                    for k in ('clicks', 'items_ordered', 'direct_ordered',
+                              'items_shipped', 'items_returned'):
+                        earnings[asin][k] += row_data[k]
+                    earnings[asin]['shipped_revenue'] += row_data['shipped_revenue']
+                    earnings[asin]['total_earnings']  += row_data['total_earnings']
+                else:
+                    earnings[asin] = row_data
+
+        logging.info(f'[SCAN] Earnings CSV loaded from {path}: {len(earnings)} unique ASINs')
+        return earnings
+
+    def asin_match_scan(self):
+        """
+        Cross-reference earnings CSV ASINs against every registered network.
+        To add a new network: subclass NetworkMatcher, add one line to matchers list below.
+        Writes data/matched_asins.json and data/scan_meta.json.
+        Safe to re-run at any time — fully overwrites previous results.
+        """
+        earnings = self.load_earnings_csv()
+        if not earnings:
+            return {'error': 'No earnings CSV found. Upload via /archer/upload_earnings.'}
+
+        asin_list = list(earnings.keys())
+
+        # ── Register networks here — add new ones as more are onboarded ──────
+        matchers = [
+            ArcherNetworkMatcher(self.CACHE_DB),
+            LevantaNetworkMatcher(),
+            # ImpactNetworkMatcher(), CJNetworkMatcher(), etc.
+        ]
+
+        # Build ASIN sets per network
+        network_sets = {}
+        for m in matchers:
+            network_sets[m.name] = m.get_asin_set()
+            logging.info(f'[SCAN] {m.name}: {len(network_sets[m.name])} ASINs in catalog')
+
+        # Batch-fetch Archer product details for matched ASINs only
+        archer_asins = [a for a in asin_list if a in network_sets.get('archer', set())]
+        archer_map = {}
+        if archer_asins:
+            conn = sqlite3.connect(self.CACHE_DB)
+            conn.row_factory = sqlite3.Row
+            ph = ','.join('?' * len(archer_asins))
+            rows = conn.execute(
+                f'SELECT * FROM products WHERE asin IN ({ph})', archer_asins
+            ).fetchall()
+            conn.close()
+            archer_map = {r['asin']: dict(r) for r in rows}
+
+        results = []
+        for asin in asin_list:
+            e = earnings[asin]
+            matched_networks = [n for n, s in network_sets.items() if asin in s]
+
+            entry = {
+                'asin':                   asin,
+                'clicks':                 e['clicks'],
+                'items_ordered':          e['items_ordered'],
+                'direct_ordered':         e['direct_ordered'],
+                'conversion_rate':        e['conversion_rate'],
+                'amazon_commission_rate': e['amazon_commission_rate'],
+                'items_shipped':          e['items_shipped'],
+                'items_returned':         e['items_returned'],
+                'shipped_revenue':        e['shipped_revenue'],
+                'total_earnings':         e['total_earnings'],
+                'time_period':            e['time_period'],
+                # Frontend-compat aliases
+                'steph_revenue':          e['total_earnings'],
+                'steph_units':            e['items_shipped'],
+                # Network match flags — one per registered matcher
+                'networks':               matched_networks,
+                **{f'{n}_matched': (asin in s) for n, s in network_sets.items()},
+            }
+
+            # Enrich from Archer catalog data if matched
+            if asin in archer_map:
+                a = archer_map[asin]
+                entry.update({
+                    'product_name':         a.get('product_name', ''),
+                    'brand':                a.get('company_name', ''),
+                    'price':                a.get('price', ''),
+                    'commission':           a.get('commission_payout', ''),
+                    'archer_category':      a.get('product_category', ''),
+                    'rating':               a.get('avg_rating', ''),
+                    'reviews':              a.get('total_reviews', ''),
+                    'image_encoded_string': a.get('image_encoded_string', ''),
+                })
+
+            results.append(entry)
+
+        # Sort: most networks first, then by total earnings
+        results.sort(key=lambda x: (-len(x['networks']), -x['total_earnings']))
+
+        os.makedirs('data', exist_ok=True)
+        with open(self.MATCHED_ASINS_PATH, 'w') as f:
+            json.dump(results, f, indent=2)
+
+        network_counts = {
+            n: sum(1 for r in results if r.get(f'{n}_matched'))
+            for n in network_sets
+        }
+        meta = {
+            'scanned_at':  datetime.now().isoformat(),
+            'total_asins': len(results),
+            'networks':    network_counts,
+            'any_matched': sum(1 for r in results if r['networks']),
+            'unmatched':   sum(1 for r in results if not r['networks']),
+        }
+        with open(self.SCAN_META_PATH, 'w') as f:
+            json.dump(meta, f, indent=2)
+
+        logging.info(
+            f'[SCAN] Complete: {len(results)} ASINs | '
+            + ' | '.join(f'{n}={c}' for n, c in network_counts.items())
+        )
+        return meta
+
     def get_by_asin(self, asin):
         conn = sqlite3.connect(self.CACHE_DB)
         conn.row_factory = sqlite3.Row
@@ -856,11 +1075,65 @@ levanta_api = LevantaAPI()
 
 
 class URLGeniusAPI:
-    """URLGenius deep link API client."""
+    """URLGenius deep link API client with registry-based deduplication."""
     BASE = "https://api.urlgeni.us/api/v2"
+    REGISTRY_PATH = os.path.join(os.path.dirname(__file__), 'data', 'urlgenius_registry.json')
 
     def __init__(self):
         self.api_key = os.environ.get("URLGENIUS_API_KEY", "")
+        self._registry = {}
+        self._load_registry()
+
+    # ── REGISTRY ──────────────────────────────────────────
+
+    def _registry_key(self, destination_url, utm_source='', utm_medium='',
+                      utm_campaign='', utm_content='', utm_term=''):
+        return f"{destination_url}||{utm_source}|{utm_medium}|{utm_campaign}|{utm_content}|{utm_term}"
+
+    def _load_registry(self):
+        if os.path.exists(self.REGISTRY_PATH):
+            try:
+                with open(self.REGISTRY_PATH) as f:
+                    self._registry = json.load(f)
+                logging.info(f"[URLGENIUS] Registry loaded: {len(self._registry)} links")
+            except Exception as e:
+                logging.warning(f"[URLGENIUS] Registry load failed: {e}")
+                self._registry = {}
+
+    def _save_registry(self):
+        try:
+            os.makedirs(os.path.dirname(self.REGISTRY_PATH), exist_ok=True)
+            with open(self.REGISTRY_PATH, 'w') as f:
+                json.dump(self._registry, f, indent=2)
+        except Exception as e:
+            logging.warning(f"[URLGENIUS] Registry save failed: {e}")
+
+    def seed_registry(self):
+        """Fetch all existing URLgenius links and seed the registry file."""
+        if not self.api_key:
+            return 0
+        try:
+            data = self.list_links(limit=500)
+            links = data.get('links', data if isinstance(data, list) else [])
+            n = 0
+            for link in links:
+                dest = link.get('url', '')
+                genius_url = link.get('genius_url', '')
+                if dest and genius_url:
+                    self._registry[dest] = {
+                        'genius_url': genius_url,
+                        'link_id': link.get('id'),
+                        'affiliate_url': dest,
+                    }
+                    n += 1
+            self._save_registry()
+            logging.info(f"[URLGENIUS] Registry seeded: {n} links loaded")
+            return n
+        except Exception as e:
+            logging.error(f"[URLGENIUS] Registry seed failed: {e}")
+            return 0
+
+    # ── HEADERS ───────────────────────────────────────────
 
     def _headers(self):
         return {
@@ -868,25 +1141,49 @@ class URLGeniusAPI:
             "Content-Type": "application/json",
         }
 
+    # ── LINKS ─────────────────────────────────────────────
+
     def create_link(self, destination_url, utm_source=None, utm_medium=None,
-                    utm_campaign=None, utm_content=None):
+                    utm_campaign=None, utm_content=None, utm_term=None,
+                    force_new=False):
         """
-        Create a URLGenius deep link.
-        destination_url: the affiliate URL to wrap (Amazon, Walmart, etc.)
-        UTM params are embedded so attribution flows through to app stores.
+        Create a URLGenius deep link. Checks registry first to avoid duplicates.
+        Set force_new=True to always create a fresh link.
         """
+        reg_key = self._registry_key(
+            destination_url,
+            utm_source or '', utm_medium or '',
+            utm_campaign or '', utm_content or '', utm_term or ''
+        )
+        if not force_new and reg_key in self._registry:
+            logging.info(f"[URLGENIUS] Registry hit: {reg_key[:60]}")
+            return {'link': self._registry[reg_key], '_from_registry': True}
+
         payload = {"url": destination_url}
         utms = {}
         if utm_source:   utms["utm_source"]   = utm_source
         if utm_medium:   utms["utm_medium"]   = utm_medium
         if utm_campaign: utms["utm_campaign"] = utm_campaign
         if utm_content:  utms["utm_content"]  = utm_content
+        if utm_term:     utms["utm_term"]     = utm_term
         if utms:
             payload["utm"] = utms
+
         r = requests.post(f"{self.BASE}/links", headers=self._headers(),
                           json=payload, timeout=10)
         r.raise_for_status()
-        return r.json()
+        result = r.json()
+
+        link_data = result.get('link', {})
+        if link_data.get('genius_url'):
+            self._registry[reg_key] = {
+                'genius_url': link_data['genius_url'],
+                'link_id': link_data.get('id'),
+                'affiliate_url': destination_url,
+            }
+            self._save_registry()
+
+        return result
 
     def list_links(self, limit=50):
         """List all created links."""
