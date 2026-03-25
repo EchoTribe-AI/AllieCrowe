@@ -1,0 +1,56 @@
+  Please review the current main branch of this project for correctness and 
+  runtime issues. Focus on these recently merged features:                      
+                                                            
+  1. SQLite concurrency fix (product_api.py)                                    
+  - ArcherAPI should have a _db_connect() helper that calls                     
+  sqlite3.connect(self.CACHE_DB, timeout=30) and sets PRAGMA journal_mode=WAL   
+  - Every sqlite3.connect(self.CACHE_DB) call in ArcherAPI should be replaced   
+  with self._db_connect()                                                       
+  - ArcherNetworkMatcher.get_asin_set() should also use timeout=30 and WAL mode 
+  - Verify no bare sqlite3.connect(self.CACHE_DB) calls remain                 
+                                                                                
+  2. ASIN match scan (product_api.py)                       
+  - ArcherAPI.load_earnings_csv() should load from data/earnings_latest.csv with
+   fallback to data/2025-Q12026 amazon asin earnings.csv                        
+  - It should handle - and empty string values in numeric CSV fields without    
+  raising ValueError                                                            
+  - ArcherAPI.asin_match_scan() should register both ArcherNetworkMatcher and   
+  LevantaNetworkMatcher, cross-reference earnings ASINs against both, write  
+  data/matched_asins.json and data/scan_meta.json                               
+                                                            
+  3. Levanta network matcher (product_api.py)                                   
+  - LevantaNetworkMatcher.get_asin_set() should call                            
+  LevantaAPI().get_all_accessible_asins() live first, write the result to       
+  data/network_cache_levanta.json, and fall back to that cache file if the API  
+  call fails                                                                    
+                                                            
+  4. Flask routes (app.py)
+  - GET /archer/matched must accept limit and offset query params and return
+  {products, total, has_more}                                                   
+  - POST /archer/upload_earnings should save the uploaded file to
+  data/earnings_latest.csv then immediately call asin_match_scan()              
+  - GET /archer/asin_match_scan should re-run the scan against the existing CSV 
+  - GET /archer/scan_status should return scan metadata plus csv_uploaded and  
+  csv_filename flags                                                            
+  - POST /urlgenius/smart_link should require a placement: {source, medium,     
+  campaign, term} body, validate source×medium against VALID_PLACEMENTS,        
+  auto-derive utm_content from NETWORK_CONTENT[network], and return {genius_url,
+   affiliate_url, network, label, utm}                                          
+  - There should be no duplicate import logging at the top of the file          
+                                                            
+  5. Frontend (templates/archer_products.html)                                  
+  - state object must include both catalog browse fields (network,
+  matchedOffset, matchedTotal, archerOffset, archerTotal, levantaOffset,        
+  levantaTotal) AND placement fields (linkSource, linkMedium, linkCampaign)
+  - VALID_MEDIUMS and NETWORK_CONTENT constants should be defined after the     
+  state object                                                             
+  - Sidebar must contain all sections in order: Search → Network toggle         
+  (Archer/Levanta/Both) → Category → Min Commission → Sort by → Link Type →
+  Platform → Traffic Type → Campaign Slug → Data Sync → Selected tray           
+  - loadMatchedProducts() should send limit=20&offset params and read data.total
+   for the counter                                                              
+  - runScan() should POST to /archer/upload_earnings if a CSV file is selected, 
+  otherwise GET /archer/asin_match_scan                                        
+                                                                                
+  Please check each of these, flag any bugs or missing pieces, and fix anything 
+  that won't work at runtime. 

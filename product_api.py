@@ -393,7 +393,10 @@ class ArcherAPI:
     def _db_connect(self, timeout=30):
         """Open a DB connection with WAL mode and a lock timeout."""
         conn = sqlite3.connect(self.CACHE_DB, timeout=timeout)
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass  # DB may be locked briefly on startup; WAL upgrade will succeed later
         return conn
 
     def _init_cache(self):

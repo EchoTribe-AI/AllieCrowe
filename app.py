@@ -782,10 +782,8 @@ def _seed_urlgenius():
         ug = URLGeniusAPI()
         if ug.api_key:
             n = ug.seed_registry()
-            import logging
             logging.info(f"[URLGENIUS] Startup seed: {n} links loaded")
     except Exception as e:
-        import logging
         logging.warning(f"[URLGENIUS] Startup seed failed: {e}")
 
 _seed_urlgenius()
@@ -804,7 +802,6 @@ def urlgenius_smart_link():
     utm_content is derived automatically from network — never supplied by caller.
     Returns { genius_url, affiliate_url, network, label, utm }
     """
-    import logging
     from product_api import ArcherAPI, LevantaAPI, URLGeniusAPI
     body = request.get_json() or {}
     asin = body.get('asin', '').strip()
