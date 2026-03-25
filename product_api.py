@@ -295,6 +295,9 @@ class NetworkMatcher:
     name = ''
     def get_asin_set(self) -> set:
         raise NotImplementedError
+    def get_asin_data(self) -> dict:
+        """Optional: return asin -> enrichment dict (e.g. commission). Default empty."""
+        return {}
 
 
 class ArcherNetworkMatcher(NetworkMatcher):
@@ -328,6 +331,9 @@ class LevantaNetworkMatcher(NetworkMatcher):
     CACHE_PATH = 'data/network_cache_levanta.json'
 
     def get_asin_set(self) -> set:
+        return set(self.get_asin_data().keys())
+
+    def get_asin_data(self) -> dict:
         # Try live API first
         try:
             lv = LevantaAPI()
@@ -337,23 +343,23 @@ class LevantaNetworkMatcher(NetworkMatcher):
                 os.makedirs('data', exist_ok=True)
                 with open(self.CACHE_PATH, 'w') as f:
                     json.dump(asins, f)
-                logging.info(f"[LEVANTA] get_asin_set: {len(asins)} ASINs from live API, cache written")
-                return set(asins)
+                logging.info(f"[LEVANTA] get_asin_data: {len(asins)} ASINs from live API, cache written")
+                return asin_map
         except Exception as e:
             logging.warning(f"[LEVANTA] Live API failed, falling back to cache: {e}")
 
-        # Fall back to cache
+        # Fall back to cache (plain ASIN list — no commission data available)
         if not os.path.exists(self.CACHE_PATH):
-            return set()
+            return {}
         try:
             with open(self.CACHE_PATH) as f:
                 data = json.load(f)
             asins = data if isinstance(data, list) else data.get('asins', [])
-            logging.info(f"[LEVANTA] get_asin_set: {len(asins)} ASINs from cache")
-            return set(asins)
+            logging.info(f"[LEVANTA] get_asin_data: {len(asins)} ASINs from cache (no commission)")
+            return {a: {} for a in asins}
         except Exception as e:
             logging.warning(f"[LEVANTA] Cache read failed: {e}")
-            return set()
+            return {}
 
 
 class ArcherAPI:
@@ -369,6 +375,17 @@ class ArcherAPI:
         self.token_expires = None
         self._init_cache()
         self._seed_from_json()
+        self._maybe_rescan()
+
+    def _maybe_rescan(self):
+        """Trigger a fresh scan if matched_asins.json is stale (missing 'networks' field)."""
+        try:
+            matched = self._load_matched_json()
+            if matched and 'networks' not in matched[0]:
+                logging.info("[SCAN] matched_asins.json is stale — triggering background rescan")
+                self.asin_match_scan()
+        except Exception as e:
+            logging.warning(f"[SCAN] Startup rescan check failed: {e}")
 
     # ── AUTH ──────────────────────────────────────────────
 
@@ -767,10 +784,13 @@ class ArcherAPI:
             # ImpactNetworkMatcher(), CJNetworkMatcher(), etc.
         ]
 
-        # Build ASIN sets per network
+        # Build ASIN sets and enrichment data per network
         network_sets = {}
+        network_data = {}
         for m in matchers:
-            network_sets[m.name] = m.get_asin_set()
+            data = m.get_asin_data()
+            network_data[m.name] = data
+            network_sets[m.name] = set(data.keys())
             logging.info(f'[SCAN] {m.name}: {len(network_sets[m.name])} ASINs in catalog')
 
         # Batch-fetch Archer product details for matched ASINs only
@@ -824,6 +844,15 @@ class ArcherAPI:
                     'reviews':              a.get('total_reviews', ''),
                     'image_encoded_string': a.get('image_encoded_string', ''),
                 })
+
+            # Enrich from Levanta commission data if matched
+            lv_data = network_data.get('levanta', {}).get(asin, {})
+            if lv_data:
+                entry['levanta_commission'] = lv_data.get('commission_pct', '')
+                if not entry.get('product_name'):
+                    entry['product_name'] = lv_data.get('title', '')
+                if not entry.get('brand'):
+                    entry['brand'] = lv_data.get('brand', '')
 
             results.append(entry)
 

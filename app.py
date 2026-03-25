@@ -253,6 +253,15 @@ def archer_asin_match_scan():
     return jsonify(result)
 
 
+@app.route('/archer/force_rescan')
+def archer_force_rescan():
+    """Force-regenerate matched_asins.json with current network data."""
+    from product_api import ArcherAPI
+    a = ArcherAPI()
+    result = a.asin_match_scan()
+    return jsonify(result)
+
+
 @app.route('/archer/scan_status')
 def archer_scan_status():
     """Return metadata from the last scan run (scan_meta.json)."""
@@ -464,7 +473,6 @@ def archer_collage():
 @app.route('/archer/product/<asin>')
 def archer_get_product(asin):
     from product_api import ArcherAPI
-    import logging
     a = ArcherAPI()
     product = a.get_by_asins([asin])
 
@@ -481,7 +489,7 @@ def archer_get_product(asin):
                 data = r.json()
                 img = data.get("image_encoded_string", "")
                 if img:
-                    conn = sqlite3.connect(a.CACHE_DB)
+                    conn = a._db_connect()
                     conn.execute("UPDATE products SET image_encoded_string=? WHERE asin=?", (img, asin))
                     conn.commit()
                     conn.close()
@@ -536,7 +544,7 @@ def archer_save_collage():
             if link:
                 p['attribution_link'] = link.get('attribution_link') or link.get('url') or ''
 
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.execute("""
         INSERT OR REPLACE INTO collages
         (slug, products_json, layout, theme, caption, direct_to_amazon, created_at)
@@ -557,7 +565,7 @@ def archer_save_collage():
 def archer_list_collages():
     from product_api import ArcherAPI
     a = ArcherAPI()
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT slug, theme, layout, created_at, click_count, products_json FROM collages ORDER BY created_at DESC LIMIT 20"
@@ -580,7 +588,7 @@ def archer_list_collages():
 def shop_landing(slug):
     from product_api import ArcherAPI
     a = ArcherAPI()
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.row_factory = sqlite3.Row
     row = conn.execute("SELECT * FROM collages WHERE slug=?", (slug,)).fetchone()
     conn.close()
@@ -601,7 +609,7 @@ def archer_track_click():
     from product_api import ArcherAPI
     data = request.get_json() or {}
     a = ArcherAPI()
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.execute(
         "INSERT INTO click_log (asin, slug, fbclid, attribution_url) VALUES (?,?,?,?)",
         (data.get('asin'), data.get('slug'), data.get('fbclid'), data.get('attribution_url'))
@@ -713,7 +721,7 @@ def archer_save_campaign():
                     v['attribution_url'] = link.get('attribution_link') or link.get('url') or ''
                     v['label'] = label
 
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.execute("""
         INSERT OR REPLACE INTO campaigns
         (slug, campaign_type, routing, products_json, variants_json, spend_budget, forecast_roas, status, created_at)
@@ -735,7 +743,7 @@ def archer_save_campaign():
 def archer_list_campaigns():
     from product_api import ArcherAPI
     a = ArcherAPI()
-    conn = sqlite3.connect(a.CACHE_DB)
+    conn = a._db_connect()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT slug, campaign_type, routing, products_json, forecast_roas, status, created_at FROM campaigns ORDER BY created_at DESC LIMIT 20"

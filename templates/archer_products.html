@@ -835,6 +835,18 @@
     const grid = document.getElementById('matched-grid');
     let products = [...state.filtered];
 
+    // Filter by active network toggle
+    if (state.network === 'archer') {
+      products = products.filter(p =>
+        p.archer_matched === true || (Array.isArray(p.networks) && p.networks.includes('archer'))
+      );
+    } else if (state.network === 'levanta') {
+      products = products.filter(p =>
+        p.levanta_matched === true || (Array.isArray(p.networks) && p.networks.includes('levanta'))
+      );
+    }
+    // 'both' = no filter
+
     // Apply category filter — check all possible category field names
     if (state.category) {
       products = products.filter(p =>
@@ -914,13 +926,19 @@
       }
     } catch(e) {}
 
+    const levantaComm = p.levanta_commission || '';
     const commNum = parseFloat(commission.replace('%','')) || 0;
     const commColor = commNum >= 25 ? 'color:var(--archer)' : commNum >= 15 ? 'color:var(--green)' : '';
 
+    const hasArcher  = p.archer_matched  === true || (Array.isArray(p.networks) && p.networks.includes('archer'));
+    const hasLevanta = p.levanta_matched === true || (Array.isArray(p.networks) && p.networks.includes('levanta')) || !!state.levantaMap[asin];
+
     return `
-    <div class="product-card ${isSelected ? 'selected' : ''} ${isLinked ? 'linked' : ''}" 
+    <div class="product-card ${isSelected ? 'selected' : ''} ${isLinked ? 'linked' : ''}"
          id="card-${asin}" onclick="toggleSelect('${asin}', '${escStr(name)}', '${commission}')">
-      ${isMatched ? `<div class="pc-matched-badge">✓ Matched${state.levantaMap[asin] ? ' · ⚡ Levanta' : ''}</div>` : ''}
+      ${isMatched ? `<div class="pc-matched-badge">
+        ${hasArcher  ? '🏹 Archer' : ''}${hasArcher && hasLevanta ? ' · ' : ''}${hasLevanta ? '⚡ Levanta' : ''}${!hasArcher && !hasLevanta ? '✓ Matched' : ''}
+      </div>` : ''}
       ${!isMatched && p.source === 'levanta' ? '<div class="pc-matched-badge" style="background:#e8f8f4;color:#0a6b52;border-color:rgba(10,107,82,0.3);">⚡ Levanta</div>' : ''}
       <div class="pc-check">${isSelected || isLinked ? '✓' : ''}</div>
       <div class="pc-image">
@@ -940,6 +958,7 @@
           </div>
           <div class="pc-commission" style="${commColor}">${commission}</div>
         </div>
+        ${levantaComm ? `<div style="font-size:10px;color:#0a6b52;font-weight:600;margin-top:2px;">⚡ Levanta: ${levantaComm}</div>` : ''}
         ${dealBadge}
       </div>
       <div class="link-display ${link ? 'visible' : ''}" id="link-${asin}">
@@ -1081,6 +1100,7 @@
     ['archer', 'levanta', 'both'].forEach(n => {
       document.getElementById(`net-${n}`)?.classList.toggle('active', n === net);
     });
+    renderMatchedGrid();
     if (state.searchQuery) {
       searchCatalog(state.searchQuery);
     } else {
