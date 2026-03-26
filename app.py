@@ -312,7 +312,7 @@ def archer_search():
     q = request.args.get('q', '').strip()
     category = request.args.get('category', '')
     min_commission = int(request.args.get('min_commission', 0))
-    limit = min(int(request.args.get('limit', 20)), 20)
+    limit = min(int(request.args.get('limit', 20)), 200)
     offset = int(request.args.get('offset', 0))
     network = request.args.get('network', 'archer')
 
@@ -355,20 +355,38 @@ def archer_search():
         results.extend(archer_results)
 
     levanta_formatted = []
+    levanta_full_count = 0
     if network in ('levanta', 'both'):
         lv = LevantaAPI()
         try:
             if q:
                 lv_raw_list = lv.search_products(q, limit=limit)
             else:
-                # Browse mode — top accessible products by commission descending, up to limit
-                data = lv.get_products(limit=200)
-                lv_raw_list = sorted(
-                    [p for p in data.get('products', []) if p.get('access') is True],
-                    key=lambda p: p.get('commission', 0),
-                    reverse=True
-                )[:limit]
-            formatted = [lv.format_for_frontend(p) for p in lv_raw_list]
+                # Browse mode — paginate through full catalog, up to 500 accessible products
+                lv_raw_list = []
+                cursor = None
+                while len(lv_raw_list) < 500:
+                    data = lv.get_products(limit=100, cursor=cursor)
+                    products = data.get('products', [])
+                    lv_raw_list.extend([p for p in products if p.get('access') is True])
+                    cursor = data.get('cursor')
+                    if not cursor or not products:
+                        break
+                lv_raw_list = sorted(lv_raw_list, key=lambda p: p.get('commission', 0), reverse=True)
+
+            # Apply filters before slicing
+            if q:
+                q_lower = q.lower()
+                lv_raw_list = [p for p in lv_raw_list if
+                    q_lower in (p.get('title') or '').lower() or
+                    q_lower in (p.get('brandName') or '').lower() or
+                    q_lower in (p.get('asin') or '').lower()]
+            if category:
+                lv_raw_list = [p for p in lv_raw_list if
+                    category.lower() in (p.get('category') or p.get('productGroup') or '').lower()]
+
+            levanta_full_count = len(lv_raw_list)
+            formatted = [lv.format_for_frontend(p) for p in lv_raw_list[offset:offset + limit]]
             if min_commission > 0:
                 formatted = [p for p in formatted if
                     float((p.get('commission_payout') or '0').replace('%', '') or 0) >= min_commission]
@@ -380,8 +398,10 @@ def archer_search():
         'products': (results + levanta_formatted)[offset:offset + limit],
         'archer': results[offset:offset + limit],
         'archer_total': len(results),
-        'levanta': levanta_formatted[offset:offset + limit],
-        'levanta_total': len(levanta_formatted),
+        'archer_catalog_total': 113835,
+        'levanta': levanta_formatted,
+        'levanta_total': levanta_full_count,
+        'levanta_catalog_total': levanta_full_count or len(levanta_formatted),
     })
 
 @app.route('/archer/levanta_match_scan')
