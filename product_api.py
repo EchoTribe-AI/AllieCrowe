@@ -984,16 +984,20 @@ class ArcherAPI:
         )
 
         # Levanta brand expansion
+        # Use the live network_data already fetched (avoids re-reading cache).
+        # Fall back to reading cache file only if network_data['levanta'] is empty.
+        lv_data_map = network_data.get('levanta', {})
+        if not lv_data_map:
+            try:
+                with open(self.LEVANTA_CACHE_PATH) as f:
+                    raw = json.load(f)
+                lv_data_map = raw if isinstance(raw, dict) else {a: {} for a in raw}
+                logging.info(f'[SCAN] Levanta brand expansion: using cache file ({len(lv_data_map)} ASINs)')
+            except Exception:
+                lv_data_map = {}
+
         # Collect brands from ANY direct earnings ASIN match (Archer or Levanta).
         # A direct match = earnings ASIN was in a network catalog (not brand-expanded).
-        # If we know Steph sells Brand X on Amazon, check all networks for Brand X.
-        lv_cache = {}
-        try:
-            with open(self.LEVANTA_CACHE_PATH) as f:
-                lv_cache = json.load(f)
-        except Exception:
-            pass
-
         direct_levanta_brands = set()
         for entry in results:
             if entry['asin'] not in earnings_asin_set or not entry.get('brand'):
@@ -1005,12 +1009,22 @@ class ArcherAPI:
             if is_direct:
                 direct_levanta_brands.add(entry['brand'].lower().strip())
 
+        logging.info(f'[SCAN] Levanta brand expansion: checking {len(direct_levanta_brands)} brands '
+                     f'({", ".join(sorted(direct_levanta_brands)) or "none"}) '
+                     f'against {len(lv_data_map)} Levanta ASINs')
+
+        # Build brand index from Levanta data (only entries with brand metadata)
         levanta_brand_index = {}
-        if isinstance(lv_cache, dict):
-            for asin_val, meta in lv_cache.items():
-                b = (meta.get('brand') or '').lower().strip()
-                if b:
-                    levanta_brand_index.setdefault(b, []).append(asin_val)
+        for asin_val, meta in lv_data_map.items():
+            b = (meta.get('brand') or '').lower().strip()
+            if b:
+                levanta_brand_index.setdefault(b, []).append(asin_val)
+
+        logging.info(f'[SCAN] Levanta brand index: {len(levanta_brand_index)} unique brands in catalog')
+        # Log which target brands were found vs missed
+        for b in sorted(direct_levanta_brands):
+            found = len(levanta_brand_index.get(b, []))
+            logging.info(f'[SCAN]   brand "{b}": {found} Levanta products')
 
         levanta_expanded = []
         expanded_asin_set = earnings_asin_set | {e['asin'] for e in archer_expanded}
@@ -1018,7 +1032,7 @@ class ArcherAPI:
             for lv_asin in levanta_brand_index.get(brand, []):
                 if lv_asin in expanded_asin_set:
                     continue
-                meta = lv_cache.get(lv_asin, {})
+                meta = lv_data_map.get(lv_asin, {})
                 levanta_expanded.append({
                     'asin':                   lv_asin,
                     'product_name':           meta.get('title', ''),
