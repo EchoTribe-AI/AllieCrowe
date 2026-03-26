@@ -900,12 +900,6 @@ class ArcherAPI:
                 **{f'{n}_matched': (asin in s) for n, s in network_sets.items()},
             }
 
-            # Seed brand/name from earnings CSV (present in some report formats)
-            if e.get('brand'):
-                entry.setdefault('brand', e['brand'])
-            if e.get('product_name'):
-                entry.setdefault('product_name', e['product_name'])
-
             # Enrich from Archer catalog CSV data if directly matched
             archer_csv = network_data.get('archer', {}).get(asin)
             if archer_csv:
@@ -931,61 +925,110 @@ class ArcherAPI:
 
             results.append(entry)
 
-        # ── Brand-level Archer matching ───────────────────────────────────────
-        # For earnings ASINs not directly in Archer, check if their brand
-        # appears in the Archer catalog (catches brand partners sold under
-        # different ASINs than the ones Archer has indexed).
-        archer_brands = {}
+        # ── Brand-level expansion from direct matches ─────────────────────────
+        # Brand comes from the network catalog (not the earnings CSV).
+        # Step 1: collect brands discovered via direct ASIN matches.
+        # Step 2: add NEW result entries for every catalog product from those
+        #         brands that isn't already an earnings ASIN.
+
+        earnings_asin_set = set(asin_list)  # only earnings ASINs are "original" entries
+
+        # Archer brand expansion
+        direct_archer_brands = set()
+        for entry in results:
+            if entry.get('archer_matched') and entry.get('brand'):
+                direct_archer_brands.add(entry['brand'].lower().strip())
+
+        archer_brand_index = {}
         for asin_val, meta in network_data.get('archer', {}).items():
             b = (meta.get('brand') or '').lower().strip()
             if b:
-                archer_brands.setdefault(b, set()).add(asin_val)
+                archer_brand_index.setdefault(b, []).append(asin_val)
 
-        brand_match_count = 0
-        for entry in results:
-            if entry.get('archer_matched'):
-                continue  # already a direct ASIN match
-            brand = (entry.get('brand') or '').lower().strip()
-            if brand and brand in archer_brands:
-                entry['archer_matched'] = True
-                entry['archer_brand_match'] = True
-                if 'archer' not in entry['networks']:
-                    entry['networks'].append('archer')
-                brand_match_count += 1
+        archer_expanded = []
+        for brand in direct_archer_brands:
+            for archer_asin in archer_brand_index.get(brand, []):
+                if archer_asin in earnings_asin_set:
+                    continue  # already covered as a direct earnings match
+                meta = network_data['archer'][archer_asin]
+                archer_expanded.append({
+                    'asin':                   archer_asin,
+                    'product_name':           meta.get('product_name', ''),
+                    'brand':                  meta.get('brand', ''),
+                    'price':                  meta.get('price', ''),
+                    'commission':             meta.get('commission', ''),
+                    'archer_category':        meta.get('archer_category', ''),
+                    'rating':                 meta.get('rating', ''),
+                    'reviews':                meta.get('reviews', ''),
+                    'image_encoded_string':   '',
+                    'networks':               ['archer'],
+                    'archer_matched':         True,
+                    'archer_brand_match':     True,
+                    'levanta_matched':        False,
+                    # No earnings data for brand-expanded records
+                    'clicks': 0, 'items_ordered': 0, 'direct_ordered': 0,
+                    'conversion_rate': '', 'amazon_commission_rate': '',
+                    'items_shipped': 0, 'items_returned': 0,
+                    'shipped_revenue': 0.0, 'total_earnings': 0.0,
+                    'time_period': '', 'steph_revenue': 0.0, 'steph_units': 0,
+                })
 
-        logging.info(f'[SCAN] Brand-level Archer matches added: {brand_match_count}')
+        results.extend(archer_expanded)
+        logging.info(
+            f'[SCAN] Archer brand expansion: {len(direct_archer_brands)} brands → '
+            f'{len(archer_expanded)} additional products'
+        )
 
-        # ── Brand-level Levanta matching ──────────────────────────────────────
-        levanta_brand_map = {}  # brand_lower -> set of levanta ASINs
+        # Levanta brand expansion
         lv_cache = {}
         try:
             with open(self.LEVANTA_CACHE_PATH) as f:
                 lv_cache = json.load(f)
-            if isinstance(lv_cache, dict):
-                for asin_val, meta in lv_cache.items():
-                    b = (meta.get('brand') or '').lower().strip()
-                    if b:
-                        levanta_brand_map.setdefault(b, set()).add(asin_val)
         except Exception:
             pass
 
-        lv_brand_match_count = 0
+        direct_levanta_brands = set()
         for entry in results:
-            if entry.get('levanta_matched'):
-                continue  # already a direct ASIN match
-            brand = (entry.get('brand') or '').lower().strip()
-            if brand and brand in levanta_brand_map:
-                entry['levanta_matched'] = True
-                entry['levanta_brand_match'] = True
-                if 'levanta' not in entry['networks']:
-                    entry['networks'].append('levanta')
-                # Carry commission from a sample ASIN for that brand
-                sample_asin = next(iter(levanta_brand_map[brand]))
-                if sample_asin in lv_cache:
-                    entry.setdefault('levanta_commission', lv_cache[sample_asin].get('commission_pct', ''))
-                lv_brand_match_count += 1
+            if entry.get('levanta_matched') and not entry.get('archer_brand_match') and entry.get('brand'):
+                direct_levanta_brands.add(entry['brand'].lower().strip())
 
-        logging.info(f'[SCAN] Brand-level Levanta matches added: {lv_brand_match_count}')
+        levanta_brand_index = {}
+        if isinstance(lv_cache, dict):
+            for asin_val, meta in lv_cache.items():
+                b = (meta.get('brand') or '').lower().strip()
+                if b:
+                    levanta_brand_index.setdefault(b, []).append(asin_val)
+
+        levanta_expanded = []
+        expanded_asin_set = earnings_asin_set | {e['asin'] for e in archer_expanded}
+        for brand in direct_levanta_brands:
+            for lv_asin in levanta_brand_index.get(brand, []):
+                if lv_asin in expanded_asin_set:
+                    continue
+                meta = lv_cache.get(lv_asin, {})
+                levanta_expanded.append({
+                    'asin':                   lv_asin,
+                    'product_name':           meta.get('title', ''),
+                    'brand':                  meta.get('brand', ''),
+                    'price':                  '',
+                    'commission':             '',
+                    'levanta_commission':     meta.get('commission_pct', ''),
+                    'networks':               ['levanta'],
+                    'archer_matched':         False,
+                    'levanta_matched':        True,
+                    'levanta_brand_match':    True,
+                    'clicks': 0, 'items_ordered': 0, 'direct_ordered': 0,
+                    'conversion_rate': '', 'amazon_commission_rate': '',
+                    'items_shipped': 0, 'items_returned': 0,
+                    'shipped_revenue': 0.0, 'total_earnings': 0.0,
+                    'time_period': '', 'steph_revenue': 0.0, 'steph_units': 0,
+                })
+
+        results.extend(levanta_expanded)
+        logging.info(
+            f'[SCAN] Levanta brand expansion: {len(direct_levanta_brands)} brands → '
+            f'{len(levanta_expanded)} additional products'
+        )
 
         # Sort: most networks first, then by total earnings
         results.sort(key=lambda x: (-len(x['networks']), -x['total_earnings']))
