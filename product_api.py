@@ -387,24 +387,27 @@ class LevantaNetworkMatcher(NetworkMatcher):
             lv = LevantaAPI()
             if lv.api_key:
                 asin_map = lv.get_all_accessible_asins()
-                asins = list(asin_map.keys())
                 os.makedirs('data', exist_ok=True)
                 with open(self.CACHE_PATH, 'w') as f:
-                    json.dump(asins, f)
-                logging.info(f"[LEVANTA] get_asin_data: {len(asins)} ASINs from live API, cache written")
+                    json.dump(asin_map, f)  # save full dict with brand/commission/title
+                logging.info(f"[LEVANTA] get_asin_data: {len(asin_map)} ASINs from live API, cache written")
                 return asin_map
         except Exception as e:
             logging.warning(f"[LEVANTA] Live API failed, falling back to cache: {e}")
 
-        # Fall back to cache (plain ASIN list — no commission data available)
+        # Fall back to cache — supports both legacy list and new dict format
         if not os.path.exists(self.CACHE_PATH):
             return {}
         try:
             with open(self.CACHE_PATH) as f:
                 data = json.load(f)
-            asins = data if isinstance(data, list) else data.get('asins', [])
-            logging.info(f"[LEVANTA] get_asin_data: {len(asins)} ASINs from cache (no commission)")
-            return {a: {} for a in asins}
+            if isinstance(data, list):
+                logging.info(f"[LEVANTA] get_asin_data: {len(data)} ASINs from cache (legacy list, no metadata)")
+                return {a: {} for a in data}
+            elif isinstance(data, dict):
+                logging.info(f"[LEVANTA] get_asin_data: {len(data)} ASINs from cache (full metadata)")
+                return data
+            return {}
         except Exception as e:
             logging.warning(f"[LEVANTA] Cache read failed: {e}")
             return {}
@@ -762,9 +765,9 @@ class ArcherAPI:
 
     # Canonical upload path — always written by the upload endpoint
     EARNINGS_CSV_PATH   = 'data/earnings_latest.csv'
-    # Legacy fallback for existing local file
     EARNINGS_CSV_LEGACY = 'data/2025-Q12026 amazon asin earnings.csv'
     SCAN_META_PATH      = 'data/scan_meta.json'
+    LEVANTA_CACHE_PATH  = 'data/network_cache_levanta.json'
 
     def load_earnings_csv(self):
         """
@@ -951,6 +954,38 @@ class ArcherAPI:
                 brand_match_count += 1
 
         logging.info(f'[SCAN] Brand-level Archer matches added: {brand_match_count}')
+
+        # ── Brand-level Levanta matching ──────────────────────────────────────
+        levanta_brand_map = {}  # brand_lower -> set of levanta ASINs
+        lv_cache = {}
+        try:
+            with open(self.LEVANTA_CACHE_PATH) as f:
+                lv_cache = json.load(f)
+            if isinstance(lv_cache, dict):
+                for asin_val, meta in lv_cache.items():
+                    b = (meta.get('brand') or '').lower().strip()
+                    if b:
+                        levanta_brand_map.setdefault(b, set()).add(asin_val)
+        except Exception:
+            pass
+
+        lv_brand_match_count = 0
+        for entry in results:
+            if entry.get('levanta_matched'):
+                continue  # already a direct ASIN match
+            brand = (entry.get('brand') or '').lower().strip()
+            if brand and brand in levanta_brand_map:
+                entry['levanta_matched'] = True
+                entry['levanta_brand_match'] = True
+                if 'levanta' not in entry['networks']:
+                    entry['networks'].append('levanta')
+                # Carry commission from a sample ASIN for that brand
+                sample_asin = next(iter(levanta_brand_map[brand]))
+                if sample_asin in lv_cache:
+                    entry.setdefault('levanta_commission', lv_cache[sample_asin].get('commission_pct', ''))
+                lv_brand_match_count += 1
+
+        logging.info(f'[SCAN] Brand-level Levanta matches added: {lv_brand_match_count}')
 
         # Sort: most networks first, then by total earnings
         results.sort(key=lambda x: (-len(x['networks']), -x['total_earnings']))
@@ -1175,7 +1210,7 @@ class LevantaAPI:
         asin_map = {}
         cursor = None
         pages = 0
-        while pages < 20:  # safety cap — 20 pages × 100 = 2000 products
+        while pages < 200:  # safety cap — 200 pages × 100 = 20,000 products
             data = self.get_products(limit=100, cursor=cursor)
             products = data.get("products", [])
             for p in products:
