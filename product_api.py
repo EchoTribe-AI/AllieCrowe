@@ -1276,16 +1276,14 @@ class LevantaAPI:
         """
         Fetch all Levanta brands and return a dict of brandId -> brand name.
         Products only carry a brandId UUID, so we need this to get human-readable names.
+        Brands API confirmed to return: {brands: [{id: "uuid", name: "Brand Name", ...}]}
         """
         brand_lookup = {}
         try:
-            data = self.get_brands(access_only=False, limit=200)
-            # API may return brands under different keys
-            brands = (data.get('brands') or data.get('data') or
-                      data.get('items') or [])
-            for b in brands:
-                bid  = b.get('id') or b.get('brandId') or b.get('uuid') or ''
-                name = b.get('name') or b.get('brandName') or b.get('displayName') or ''
+            data = self.get_brands(access_only=False)
+            for b in data.get('brands', []):
+                bid  = b.get('id', '')
+                name = b.get('name', '')
                 if bid and name:
                     brand_lookup[bid] = name
             logging.info(f'[LEVANTA] Brand lookup built: {len(brand_lookup)} brands')
@@ -1299,28 +1297,35 @@ class LevantaAPI:
         asin -> {commission, commission_pct, title, brand} for accessible products only.
         Brand name is resolved via brandId → brands endpoint lookup.
         """
-        brand_lookup = self.get_brand_lookup()
+        # Step 1: build brandId → name map
+        brand_name_map = {}
+        try:
+            brands_data = self.get_brands(access_only=False)
+            for b in brands_data.get('brands', []):
+                brand_name_map[b.get('id')] = b.get('name', '')
+            logging.info(f'[LEVANTA] Brand name map: {len(brand_name_map)} brands')
+        except Exception as e:
+            logging.warning(f'[LEVANTA] Brand lookup failed: {e}')
 
+        # Step 2: page through products with brand name resolved
         asin_map = {}
         cursor = None
         pages = 0
-        while pages < 200:  # safety cap — 200 pages × 100 = 20,000 products
+        while pages < 200:
             data = self.get_products(limit=100, cursor=cursor)
-            products = data.get("products", [])
+            products = data.get('products', [])
             for p in products:
-                if p.get("access") is True:
-                    asin = p.get("asin")
+                if p.get('access') is True:
+                    asin = p.get('asin')
                     if asin:
-                        brand_id   = p.get("brandId", "")
-                        brand_name = brand_lookup.get(brand_id, "")
+                        brand_name = brand_name_map.get(p.get('brandId'), '')
                         asin_map[asin] = {
-                            "commission":     p.get("commission", 0),
-                            "commission_pct": f"{int(p.get('commission', 0) * 100)}%",
-                            "title":          p.get("title") or p.get("name") or "",
-                            "brand":          brand_name,
-                            "brand_id":       brand_id,
+                            'commission':     p.get('commission', 0),
+                            'commission_pct': f"{int(p.get('commission', 0) * 100)}%",
+                            'title':          p.get('title') or '',
+                            'brand':          brand_name,
                         }
-            cursor = data.get("cursor")
+            cursor = data.get('cursor')
             if not cursor or not products:
                 break
             pages += 1
